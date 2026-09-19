@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Optional
 
 import requests
+import concurrent.futures
 
 from cache import cache, TTL_REALTIME, TTL_HISTORIQUE
 import secrets_util
@@ -26,6 +27,17 @@ logger = logging.getLogger("advice.analysis")
 FMP_BASE = "https://financialmodelingprep.com/stable"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockAdviceBackend/1.0)"}
+
+# Yahoo Finance (via yfinance) est utilise en repli pour les valeurs hors
+# couverture du plan FMP gratuit (notamment Euronext Paris, cf. README).
+# Ces appels ne prennent PAS de "timeout=" en interne et peuvent, sur
+# certains tickers/reseaux, bloquer bien au-dela des 10s habituelles -
+# jusqu'a ce que le navigateur de l'utilisateur abandonne (NetworkError).
+# On leur impose donc un delai dur via un thread dedie : au-dela de
+# YFINANCE_TIMEOUT_SECONDS, on abandonne ce repli et on renvoie une
+# reponse degradee mais rapide plutot que de laisser la requete pendre.
+YFINANCE_TIMEOUT_SECONDS = 15
+_YF_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="yfinance")
 
 SECTOR_AVG_PER = {
     "Technology": 30, "Tech": 30, "Communication Services": 26,
@@ -107,8 +119,16 @@ def fetch_batch_history(tickers: list[str], range_: str = "9mo") -> dict[str, li
 
     def _do_fetch():
         t0 = time.time()
-        raw = yf.download(" ".join(tickers), period=range_, interval="1d",
-                           group_by="ticker", progress=False, threads=True)
+
+        def _download():
+            return yf.download(" ".join(tickers), period=range_, interval="1d",
+                                group_by="ticker", progress=False, threads=True)
+
+        try:
+            raw = _YF_EXECUTOR.submit(_download).result(timeout=YFINANCE_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            logger.warning("yahoo_batch_timeout tickers=%s timeout_s=%s", tickers, YFINANCE_TIMEOUT_SECONDS)
+            return {t: fetch_yahoo_history(t, range_) for t in tickers}
         out: dict[str, list[dict]] = {}
         for t in tickers:
             try:
@@ -367,14 +387,19 @@ def fetch_company_profile(ticker: str) -> dict:
             return {"source": "fmp", "company_name": fmp_profile.get("companyName"),
                     "sector": fmp_profile.get("sector"), "country": fmp_profile.get("country"),
                     "currency": fmp_profile.get("currency") or "USD"}
-        try:
+        def _yahoo_profile_lookup():
             import yfinance as yf
-            info = yf.Ticker(ticker).info or {}
+            return yf.Ticker(ticker).info or {}
+
+        try:
+            info = _YF_EXECUTOR.submit(_yahoo_profile_lookup).result(timeout=YFINANCE_TIMEOUT_SECONDS)
             if info.get("longName") or info.get("shortName"):
                 logger.info("profile_fallback from=fmp to=yahoo ticker=%s reason=fmp_unavailable", ticker)
                 return {"source": "yahoo_fallback", "company_name": info.get("longName") or info.get("shortName"),
                         "sector": info.get("sector"), "country": info.get("country"),
                         "currency": info.get("currency") or "USD"}
+        except concurrent.futures.TimeoutError:
+            logger.warning("yahoo_profile_timeout ticker=%s timeout_s=%s", ticker, YFINANCE_TIMEOUT_SECONDS)
         except Exception as e:
             logger.warning("yahoo_profile_failed ticker=%s error=%s", ticker, e)
         return {"source": "none", "company_name": ticker, "sector": None, "country": None, "currency": "USD"}
