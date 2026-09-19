@@ -62,6 +62,31 @@ PEA_ELIGIBLE_COUNTRIES = {
     "Iceland", "Norway", "Liechtenstein",
 }
 
+# Devise probable d'apres le suffixe boursier du ticker (Yahoo/FMP), utilisee
+# UNIQUEMENT en dernier recours quand ni FMP ni Yahoo (yfinance) n'ont pu
+# fournir de devise explicite - notamment pour les valeurs Euronext hors
+# couverture du plan FMP gratuit (cf. fetch_company_profile). Sans ca, ces
+# valeurs retombaient a tort sur "USD" par defaut (ex. Alstom affiche en $
+# au lieu d'euros), meme si le prix affiche restait numeriquement correct.
+TICKER_SUFFIX_DEVISE = {
+    ".PA": "EUR", ".AS": "EUR", ".BR": "EUR", ".MC": "EUR", ".MI": "EUR",
+    ".DE": "EUR", ".F": "EUR", ".LS": "EUR", ".VI": "EUR", ".HE": "EUR",
+    ".IR": "EUR", ".L": "GBP", ".SW": "CHF", ".ST": "SEK", ".CO": "DKK",
+    ".OL": "NOK", ".TO": "CAD", ".V": "CAD", ".HK": "HKD", ".T": "JPY",
+    ".AX": "AUD", ".NZ": "NZD",
+}
+
+
+def _guess_devise_from_ticker(ticker: str) -> str:
+    """Repli final (pas de FMP/Yahoo profile) : devine la devise a partir du
+    suffixe de place boursiere. Sans suffixe reconnu, on suppose une valeur US
+    (comportement precedent, inchange)."""
+    upper = ticker.upper()
+    for suffix, devise in TICKER_SUFFIX_DEVISE.items():
+        if upper.endswith(suffix):
+            return devise
+    return "USD"
+
 
 def _fmp_key() -> Optional[str]:
     """Cle FMP : priorite au coffre chiffre (secrets_util), repli sur la
@@ -386,7 +411,7 @@ def fetch_company_profile(ticker: str) -> dict:
         if fmp_profile.get("companyName"):
             return {"source": "fmp", "company_name": fmp_profile.get("companyName"),
                     "sector": fmp_profile.get("sector"), "country": fmp_profile.get("country"),
-                    "currency": fmp_profile.get("currency") or "USD"}
+                    "currency": fmp_profile.get("currency") or _guess_devise_from_ticker(ticker)}
         def _yahoo_profile_lookup():
             import yfinance as yf
             return yf.Ticker(ticker).info or {}
@@ -397,12 +422,13 @@ def fetch_company_profile(ticker: str) -> dict:
                 logger.info("profile_fallback from=fmp to=yahoo ticker=%s reason=fmp_unavailable", ticker)
                 return {"source": "yahoo_fallback", "company_name": info.get("longName") or info.get("shortName"),
                         "sector": info.get("sector"), "country": info.get("country"),
-                        "currency": info.get("currency") or "USD"}
+                        "currency": info.get("currency") or _guess_devise_from_ticker(ticker)}
         except concurrent.futures.TimeoutError:
             logger.warning("yahoo_profile_timeout ticker=%s timeout_s=%s", ticker, YFINANCE_TIMEOUT_SECONDS)
         except Exception as e:
             logger.warning("yahoo_profile_failed ticker=%s error=%s", ticker, e)
-        return {"source": "none", "company_name": ticker, "sector": None, "country": None, "currency": "USD"}
+        return {"source": "none", "company_name": ticker, "sector": None, "country": None,
+                "currency": _guess_devise_from_ticker(ticker)}
 
     value, from_cache = cache.get_or_set(f"profile:{ticker}", TTL_HISTORIQUE, _do_fetch)
     return value
