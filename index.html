@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget Conseil d'Investissement — démo live</title>
+<!-- "Ajouter à l'écran d'accueil" (iOS/Android) : donne une icône et un lancement plein écran -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Conseil Bourse">
+<meta name="theme-color" content="#f2f3ee">
+<style>
+  :root{
+    --bg:#f2f3ee; --surface:#fff; --surface-2:#e7e9e0; --border:#d4d7cc;
+    --ink:#171a15; --ink-2:#4a4f42; --ink-muted:#7c8172;
+    --accent:#2f5d73; --accent-soft:#dbe6e8;
+    --good:#3f8f5f; --good-soft:#dff0e4;
+    --warn:#5b5f52; --warn-soft:#e4e6dc;
+    --bad:#b1503f; --bad-soft:#f7e0d9;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--ink); margin:0; padding:24px 16px 60px;}
+  .wrap{max-width:920px; margin:0 auto;}
+  h1{font-size:1.4rem; margin:0 0 4px;}
+  .sub{color:var(--ink-2); font-size:.9rem; margin:0 0 18px;}
+  .config{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:18px; font-size:.85rem;}
+  .config code{background:var(--surface-2); padding:2px 5px; border-radius:4px;}
+  .status{display:inline-flex; align-items:center; gap:6px; font-size:.8rem; margin-left:10px;}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--ink-muted);}
+  .dot.ok{background:var(--good);} .dot.err{background:var(--bad);}
+  .addrow{display:flex; gap:8px; margin-bottom:20px;}
+  .addrow input{flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:.95rem;}
+  .addrow button{padding:10px 16px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer;}
+  .addrow button:disabled{opacity:.5; cursor:default;}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px;}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; position:relative;}
+  .card .head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .card .tk{font-weight:700; font-size:1.1rem;}
+  .card .nom{font-size:.78rem; color:var(--ink-muted);}
+  .badge{font-size:.7rem; font-weight:700; text-transform:uppercase; padding:4px 9px; border-radius:999px;}
+  .badge.Acheter{background:var(--good-soft); color:var(--good);}
+  .badge.Conserver{background:var(--warn-soft); color:var(--warn);}
+  .badge.Vendre{background:var(--bad-soft); color:var(--bad);}
+  .price{font-size:1.5rem; font-weight:600; margin:8px 0 2px;}
+  .kv{font-size:.82rem; color:var(--ink-2); display:flex; flex-direction:column; gap:3px; margin-top:8px;}
+  .kv b{color:var(--ink);}
+  .justif{margin-top:10px; font-size:.8rem; background:var(--surface-2); border-radius:8px; padding:8px 10px; color:var(--ink-2);}
+  .alertbox{margin-top:10px; font-size:.8rem; background:var(--bad-soft); color:var(--bad); border-radius:8px; padding:8px 10px;}
+  .remove{background:none; border:none; color:var(--ink-muted); cursor:pointer; font-size:.9rem;}
+  .error{background:var(--bad-soft); color:var(--bad); border-radius:8px; padding:10px 12px; font-size:.85rem; margin-top:8px;}
+  .error button{margin-left:8px; background:var(--bad); color:#fff; border:none; border-radius:6px; padding:4px 10px; cursor:pointer;}
+  .loading{color:var(--ink-muted); font-size:.85rem; padding:20px; text-align:center;}
+  .position{margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); font-size:.82rem;}
+  .position .row{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .position input{width:90px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; font-size:.85rem; font-family:inherit;}
+  .position .pnl{font-weight:700;}
+  .position .pnl.up{color:var(--good);} .position .pnl.down{color:var(--bad);} .position .pnl.flat{color:var(--warn);}
+  .position .note{margin-top:6px; color:var(--ink-2); background:var(--surface-2); border-radius:6px; padding:6px 8px;}
+  .position .clear{background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.76rem; padding:0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Widget Conseil d'Investissement</h1>
+  <p class="sub">Frontend minimal consommant le backend en direct (<code>GET /api/advice</code>, <code>GET /api/alerts</code>) — démo de référence, pas destinée à remplacer le tableau de bord de démonstration.</p>
+  <p class="sub">« Éligible PEA » est une <b>estimation automatique</b> (pays du siège social), pas une vérification officielle — aucune liste publique d'éligibilité PEA n'est consultable par API. Vérifiez toujours auprès de votre courtier avant un achat en PEA.</p>
+
+  <div class="config">
+    URL du backend : <input id="apiBase" placeholder="https://votre-backend.onrender.com" style="font-family:monospace; padding:4px 8px; border-radius:6px; border:1px solid var(--border); width:260px;">
+    <span class="status"><span class="dot" id="statusDot"></span><span id="statusText">non vérifié</span></span>
+    <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil.</div>
+  </div>
+
+  <div class="addrow">
+    <input id="tickerInput" placeholder="Ex : AAPL (US) ou MC.PA (Euronext Paris)" maxlength="12">
+    <button id="addBtn">Ajouter</button>
+    <button id="refreshBtn" title="Rafraîchir toutes les valeurs" style="background:var(--surface-2); color:var(--ink);">↻</button>
+  </div>
+  <p class="sub" style="margin-top:-14px;">Valeurs Euronext Paris : ajoutez le suffixe <code>.PA</code> (ex. <code>MC.PA</code> LVMH, <code>TTE.PA</code> TotalEnergies, <code>OR.PA</code> L'Oréal). Les fondamentaux/dividendes de ces valeurs peuvent rester indisponibles selon le plan API configuré côté backend — voir <code>README.md</code>.</p>
+
+  <div id="grid" class="grid"></div>
+</div>
+
+<script>
+const state = { tickers: [], data: {} };
+
+// Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
+// la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
+// ouverture — utile une fois la page ajoutée à l'écran d'accueil du téléphone.
+function loadPersisted(){
+  try{
+    const savedBase = localStorage.getItem('stockAdvice.apiBase');
+    if(savedBase) document.getElementById('apiBase').value = savedBase;
+    const savedTickers = JSON.parse(localStorage.getItem('stockAdvice.tickers') || '[]');
+    if(Array.isArray(savedTickers)) state.tickers = savedTickers;
+  }catch(e){ /* stockage indisponible (navigation privée, etc.) : on repart à vide */ }
+}
+function persistApiBase(){
+  try{ localStorage.setItem('stockAdvice.apiBase', document.getElementById('apiBase').value); }catch(e){}
+}
+function persistTickers(){
+  try{ localStorage.setItem('stockAdvice.tickers', JSON.stringify(state.tickers)); }catch(e){}
+}
+
+// Prix de revient (coût d'achat moyen par action) — saisi par vous, stocké
+// UNIQUEMENT sur cet appareil (jamais envoyé au backend ni ailleurs) : c'est
+// une donnée personnelle, elle reste locale par principe, pas seulement par
+// commodité.
+function loadCostBasis(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.prixRevient') || '{}'); }catch(e){ return {}; }
+}
+function saveCostBasis(ticker, value){
+  const store = loadCostBasis();
+  if(value===null || value===undefined || isNaN(value)) delete store[ticker];
+  else store[ticker] = value;
+  try{ localStorage.setItem('stockAdvice.prixRevient', JSON.stringify(store)); }catch(e){}
+}
+
+// Analyse de la position par rapport au prix de revient — observations
+// factuelles, pas des recommandations personnalisées : la décision finale
+// reste la vôtre.
+function positionNote(pnlPct, conseil){
+  const enPlusValue = pnlPct > 0.5, enMoinsValue = pnlPct < -0.5;
+  if(enMoinsValue && conseil==='Vendre')
+    return "Vous êtes en moins-value et le signal est Vendre : vendre maintenant matérialiserait la perte — à mettre en balance avec votre horizon d'investissement.";
+  if(enMoinsValue && conseil==='Acheter')
+    return "Le signal est à l'achat malgré votre position en moins-value : certains y verraient une occasion de renforcer à moindre coût moyen (à vos risques — ça amplifie aussi l'exposition).";
+  if(enPlusValue && conseil==='Vendre')
+    return "Vous êtes en plus-value et le signal est Vendre : cohérent avec une prise de bénéfices.";
+  if(enPlusValue && conseil==='Acheter')
+    return "Vous êtes déjà en plus-value et le signal reste à l'achat : dynamique positive depuis votre achat.";
+  return null;
+}
+
+function apiBase(){ return document.getElementById('apiBase').value.replace(/\/$/, ''); }
+
+async function checkHealth(){
+  const dot = document.getElementById('statusDot'), text = document.getElementById('statusText');
+  try{
+    const r = await fetch(apiBase() + '/api/health');
+    if(!r.ok) throw new Error();
+    const j = await r.json();
+    dot.className = 'dot ok'; text.textContent = 'connecté (cache: ' + j.cache_backend + ')';
+  }catch(e){
+    dot.className = 'dot err'; text.textContent = 'backend injoignable';
+  }
+}
+
+function fmt(n, d=2){ return (n===null||n===undefined) ? '—' : Number(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function currencySymbol(devise){ return devise==='EUR' ? '€' : (devise==='USD' ? '$' : (devise||'')); }
+
+function cardSkeleton(ticker){
+  return `<div class="card" data-ticker="${ticker}">
+    <div class="head"><div><div class="tk">${ticker}</div><div class="nom">Chargement…</div></div>
+    <button class="remove" onclick="removeTicker('${ticker}')">✕</button></div>
+    <div class="loading">Interrogation du backend…</div>
+  </div>`;
+}
+
+function cardContent(ticker, d, alertMsgs){
+  if(d.error){
+    return `<div class="card" data-ticker="${ticker}">
+      <div class="head"><div class="tk">${ticker}</div><button class="remove" onclick="removeTicker('${ticker}')">✕</button></div>
+      <div class="error">${d.error.message || 'Erreur inconnue.'}
+        <button onclick="loadTicker('${ticker}')">Réessayer</button>
+      </div>
+    </div>`;
+  }
+  const justif = `Score global ${fmt(d.scoring.global,1)}/10 (technique ${fmt(d.scoring.technique,1)}, `+
+    `fondamental ${fmt(d.scoring.fondamental,1)}, sentiment ${fmt(d.scoring.sentiment,1)}) · RSI ${fmt(d.technique.rsi14,1)} · `+
+    `${d.sentiment.tonalite_actualites} · consensus ${d.sentiment.consensus_analystes||'n/a'}.`;
+  const alertsHtml = (alertMsgs && alertMsgs.length)
+    ? alertMsgs.map(a=>`<div class="alertbox">${a.message}</div>`).join('')
+    : '';
+  const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
+  const devise = currencySymbol(d.devise);
+  const pea = d.eligibilite_pea || {};
+  const peaLabel = pea.estime===true ? 'Oui' : (pea.estime===false ? 'Non' : 'Indéterminé');
+  const peaColor = pea.estime===true ? 'var(--good)' : (pea.estime===false ? 'var(--bad)' : 'var(--warn)');
+  const peaBox = `<div class="kv" style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+      <span>Éligible PEA (estimation) : <b style="color:${peaColor}">${peaLabel}</b>${pea.pays_siege ? ' — siège social : ' + pea.pays_siege : ''}</span>
+      ${pea.avertissement ? `<span style="font-size:.78rem; color:var(--ink-muted);">⚠ ${pea.avertissement}</span>` : ''}
+    </div>`;
+  const costBasis = loadCostBasis()[ticker];
+  const cours = d.seance.close;
+  let positionBox;
+  if(costBasis){
+    const pnlValeur = cours - costBasis;
+    const pnlPct = (pnlValeur / costBasis) * 100;
+    const cls = pnlPct > 0.5 ? 'up' : (pnlPct < -0.5 ? 'down' : 'flat');
+    const note = positionNote(pnlPct, d.conseil);
+    positionBox = `<div class="position">
+      <div class="row">
+        Ma position — prix de revient : <input type="number" step="0.01" min="0" class="costBasisInput" data-ticker="${ticker}" value="${costBasis}">
+        ${devise}
+        <button class="clear" data-ticker="${ticker}" data-action="clear-cost">retirer</button>
+      </div>
+      <div class="row" style="margin-top:4px;">
+        Plus/moins-value : <span class="pnl ${cls}">${pnlPct>0?'+':''}${fmt(pnlPct,2)}% (${pnlValeur>0?'+':''}${fmt(pnlValeur,2)} ${devise}/action)</span>
+      </div>
+      ${note ? `<div class="note">${note}</div>` : ''}
+    </div>`;
+  } else {
+    positionBox = `<div class="position">
+      <div class="row">
+        Vous détenez cette valeur ? Prix de revient : <input type="number" step="0.01" min="0" class="costBasisInput" data-ticker="${ticker}" placeholder="ex. 145.30">
+        ${devise}
+      </div>
+    </div>`;
+  }
+  return `<div class="card" data-ticker="${ticker}">
+    <div class="head">
+      <div><div class="tk">${ticker}</div><div class="nom">${d.nom||''}</div></div>
+      <button class="remove" onclick="removeTicker('${ticker}')">✕</button>
+    </div>
+    <span class="badge ${d.conseil}">${d.conseil}</span>
+    <div class="price">${fmt(d.seance.close)} ${devise}</div>
+    <div class="kv">
+      <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
+      <span>Objectif 3 mois : <b>${fmt(d.objectif_3_mois.retenu)} ${devise}</b> (${d.objectif_3_mois.potentiel_rendement_pct>0?'+':''}${fmt(d.objectif_3_mois.potentiel_rendement_pct)}%)</span>
+    </div>
+    ${peaBox}
+    ${positionBox}
+    <div class="justif">${justif}</div>
+    ${bascule}
+    ${alertsHtml}
+  </div>`;
+}
+
+function render(){
+  // Évite de reconstruire la grille (et donc de couper la saisie en cours)
+  // si vous êtes en train de taper un prix de revient au moment où un
+  // rafraîchissement automatique se déclenche.
+  if(document.activeElement && document.activeElement.classList.contains('costBasisInput')) return;
+  const grid = document.getElementById('grid');
+  grid.innerHTML = state.tickers.map(t => {
+    const entry = state.data[t];
+    if(!entry) return cardSkeleton(t);
+    return cardContent(t, entry.data || {error: entry.error}, entry.alerts);
+  }).join('') || '<p style="color:var(--ink-muted)">Ajoutez une action pour commencer.</p>';
+}
+
+async function loadTicker(ticker){
+  state.data[ticker] = null;
+  render();
+  try{
+    const [adviceRes, alertsRes] = await Promise.all([
+      fetch(`${apiBase()}/api/advice?symbol=${encodeURIComponent(ticker)}`),
+      fetch(`${apiBase()}/api/alerts?symbol=${encodeURIComponent(ticker)}`),
+    ]);
+    if(!adviceRes.ok){
+      const body = await adviceRes.json().catch(()=>({}));
+      throw new Error(body.detail?.message || 'Le serveur a renvoyé une erreur. Vérifiez votre connexion internet ou réessayez plus tard.');
+    }
+    const data = await adviceRes.json();
+    const alertsBody = alertsRes.ok ? await alertsRes.json() : {alerts: []};
+    state.data[ticker] = { data, alerts: alertsBody.alerts };
+  }catch(e){
+    state.data[ticker] = { error: { message: e.message || 'Impossible de contacter le backend. Vérifiez votre connexion internet ou réessayez plus tard.' } };
+  }
+  render();
+}
+
+function removeTicker(ticker){
+  state.tickers = state.tickers.filter(t => t !== ticker);
+  delete state.data[ticker];
+  persistTickers();
+  render();
+}
+
+function refreshAll(){
+  checkHealth();
+  state.tickers.forEach(loadTicker);
+}
+
+document.getElementById('addBtn').addEventListener('click', () => {
+  const input = document.getElementById('tickerInput');
+  const ticker = input.value.trim().toUpperCase();
+  if(!ticker || state.tickers.includes(ticker)) return;
+  state.tickers.push(ticker);
+  input.value = '';
+  persistTickers();
+  render();
+  loadTicker(ticker);
+});
+document.getElementById('tickerInput').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('addBtn').click(); });
+document.getElementById('apiBase').addEventListener('change', () => { persistApiBase(); checkHealth(); });
+document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+
+document.getElementById('grid').addEventListener('change', e => {
+  const input = e.target.closest('.costBasisInput');
+  if(!input) return;
+  const ticker = input.dataset.ticker;
+  const value = input.value.trim() === '' ? null : Number(input.value);
+  saveCostBasis(ticker, value);
+  render();
+});
+document.getElementById('grid').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action="clear-cost"]');
+  if(!btn) return;
+  saveCostBasis(btn.dataset.ticker, null);
+  render();
+});
+
+loadPersisted();
+checkHealth();
+render();
+state.tickers.forEach(loadTicker);
+// Rafraîchissement automatique toutes les 60 s tant que la page reste ouverte
+// (le backend met de toute façon en cache 5 min côté serveur — inutile
+// d'interroger plus souvent, voir README backend).
+setInterval(refreshAll, 60000);
+</script>
+</body>
+</html>
