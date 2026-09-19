@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+requests>=2.31
+cryptography>=42.0
+yfinance>=0.2.40
+redis>=5.0        # optionnel : n'est utilise que si REDIS_URL est definie

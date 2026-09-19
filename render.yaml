@@ -1,0 +1,20 @@
+# Fichier de configuration Render ("Blueprint").
+# Une fois ce dépôt poussé sur GitHub, Render peut lire ce fichier tout seul
+# (bouton "New +" -> "Blueprint" -> sélectionner le dépôt) et provisionner
+# automatiquement le service ci-dessous, sans avoir à remplir les champs
+# manuellement dans l'interface.
+#
+# Voir DEPLOIEMENT.md pour la marche à suivre pas à pas.
+
+services:
+  - type: web
+    name: conseil-bourse-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FMP_API_KEY
+        sync: false          # à saisir vous-même dans le tableau de bord Render (jamais commité)
+      - key: NEWSAPI_KEY
+        sync: false          # optionnel : sans elle, le sentiment reste "Neutre" par défaut
