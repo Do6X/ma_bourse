@@ -58,7 +58,7 @@
   .position .row{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
   .position input{width:90px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; font-size:.85rem; font-family:inherit;}
   .position .pnl{font-weight:700;}
-  .position .pnl.up{color:var(--good);} .position .pnl.down{color:var(--bad);} .position .pnl.flat{color:var(--warn);}
+  .position .pnl.up{color:var(--good);} .position .pnl.down{color:var(--bad);} .position .pnl.flat{color:var(--ink);}
   .position .note{margin-top:6px; color:var(--ink-2); background:var(--surface-2); border-radius:6px; padding:6px 8px;}
   .position .clear{background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.76rem; padding:0;}
   .hist-block{margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); font-size:.82rem;}
@@ -128,7 +128,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -236,6 +236,312 @@ function analysteBox(ticker, devise){
       ${tier ? `<span style="font-size:.8rem;"><b style="color:${tier.color}">${tier.label}</b></span>` : ''}
     </div>
     ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle Boursorama (note moyenne) : 1 Acheter · 2 Renforcer · 3 Conserver · 4 Alléger · 5 Vendre</div>${gauge}` : ''}
+    ${autresObjectifsHtml(ticker, devise)}
+  </div>`;
+}
+
+// Nom affiché de la valeur : le backend devine un nom pour la plupart des
+// tickers connus (voir _guess_name_from_ticker côté serveur), mais pas pour
+// tous (ex. valeurs peu suivies comme Ekinops). Ce nom saisi à la main prend
+// alors toujours le pas, y compris sur une fiche par ailleurs en échec API.
+function loadNomManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.nomManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveNomManuel(ticker, value){
+  const store = loadNomManuel();
+  if(!value || !value.trim()) delete store[ticker];
+  else store[ticker] = value.trim();
+  try{ localStorage.setItem('stockAdvice.nomManuel', JSON.stringify(store)); }catch(e){}
+}
+// Utilise une boîte de dialogue native (window.prompt), volontairement plus
+// simple qu'un champ dédié en permanence sur chaque fiche — même choix déjà
+// fait pour la confirmation de « reset-seed » (window.confirm) dans ce
+// fichier : suffisant pour une action ponctuelle, sans alourdir l'interface.
+function renameTicker(ticker){
+  const current = loadNomManuel()[ticker] || '';
+  const saisie = window.prompt(
+    'Nom à afficher pour ' + ticker + ' (laissez vide pour revenir au nom deviné automatiquement) :',
+    current
+  );
+  if(saisie === null) return; // boîte annulée : on ne change rien
+  saveNomManuel(ticker, saisie);
+  render();
+}
+
+// Éligibilité PEA : le backend ne fournit qu'une ESTIMATION (pays du siège
+// social, voir eligibilite_pea côté serveur) — aucune liste officielle n'est
+// consultable par API. Cette case cochée par vous (ex. après vérification
+// auprès de votre courtier) prend le pas sur l'estimation ; décochée, on
+// retombe simplement sur l'estimation automatique (elle ne force jamais un
+// « Non », elle enregistre seulement une confirmation positive).
+function loadPeaManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.peaManuel') || '{}'); }catch(e){ return {}; }
+}
+function savePeaManuel(ticker, checked){
+  const store = loadPeaManuel();
+  if(checked) store[ticker] = true; else delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.peaManuel', JSON.stringify(store)); }catch(e){}
+}
+// Bloc éligibilité PEA — factorisé en fonction (au lieu d'un simple bloc
+// local dans cardContent) pour pouvoir aussi l'afficher sur une fiche en
+// échec API (pea=null dans ce cas : seule votre case cochée fait alors foi).
+function peaBox(ticker, pea){
+  const peaManuel = loadPeaManuel()[ticker] === true;
+  const peaEffectif = peaManuel ? true : (pea ? pea.estime : null);
+  const peaLabel = peaEffectif===true ? 'Oui' : (peaEffectif===false ? 'Non' : 'Indéterminé');
+  const peaColor = peaEffectif===true ? 'var(--good)' : (peaEffectif===false ? 'var(--bad)' : 'var(--warn)');
+  return `<div class="kv" style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+      <span>Éligible PEA${peaManuel ? ' (confirmé par vous)' : ' (estimation)'} : <b style="color:${peaColor}">${peaLabel}</b>${(!peaManuel && pea && pea.pays_siege) ? ' — siège social : ' + pea.pays_siege : ''}</span>
+      <label style="display:flex; align-items:center; gap:6px; margin-top:4px; font-size:.78rem; cursor:pointer;">
+        <input type="checkbox" class="peaManuelCheckbox" data-ticker="${ticker}" ${peaManuel ? 'checked' : ''}>
+        J'ai vérifié : cette valeur est éligible au PEA
+      </label>
+      ${(!peaManuel && pea && pea.avertissement) ? `<span style="font-size:.78rem; color:var(--ink-muted);">⚠ ${pea.avertissement}</span>` : ''}
+    </div>`;
+}
+
+// Couleur uniforme (vert positif / rouge négatif / noir neutre) pour tout
+// pourcentage de variation affiché sur la fiche — même convention que dans
+// le tableau d'historique (.hist-table td.up/.down) et la plus/moins-value
+// de votre position (.position .pnl.up/.down/.flat).
+function pctSpan(pct, decimals){
+  if(pct===null || pct===undefined || isNaN(pct)) return '—';
+  const d = decimals===undefined ? 2 : decimals;
+  const color = pct>0 ? 'var(--good)' : (pct<0 ? 'var(--bad)' : 'var(--ink)');
+  return `<span style="color:${color}">${pct>0?'+':''}${fmt(pct,d)}%</span>`;
+}
+// Badge de variation du jour, affiché juste à côté du cours — vert/rouge/noir
+// selon le signe, comme demandé (même logique que pctSpan, en plus visible).
+function variationBadge(pct){
+  if(pct===null || pct===undefined || isNaN(pct)) return '';
+  const color = pct>0 ? 'var(--good)' : (pct<0 ? 'var(--bad)' : 'var(--ink)');
+  return `<span style="font-size:.85rem; font-weight:600; color:${color};">${pct>0?'+':''}${fmt(pct,2)}%</span>`;
+}
+
+// Objectifs de cours d'autres analystes, en complément de l'objectif
+// « principal » (Boursorama, ci-dessus) : plusieurs valeurs possibles, une
+// source (texte libre ou URL) par entrée, jamais fusionnées entre elles —
+// seule une fourchette/moyenne informative est calculée à partir de 2 saisies
+// ou plus. Ne remplace jamais l'objectif principal utilisé pour le potentiel
+// (%) affiché en haut de fiche : c'est une information complémentaire.
+function loadObjectifsAnalystes(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifsAnalystes') || '{}'); }catch(e){ return {}; }
+}
+function addObjectifAnalyste(ticker, value, source){
+  const store = loadObjectifsAnalystes();
+  const list = store[ticker] || [];
+  list.push({ value, source: (source || '').trim(), date: isoDate(new Date()) });
+  store[ticker] = list;
+  try{ localStorage.setItem('stockAdvice.objectifsAnalystes', JSON.stringify(store)); }catch(e){}
+}
+function removeObjectifAnalyste(ticker, index){
+  const store = loadObjectifsAnalystes();
+  const list = store[ticker] || [];
+  list.splice(index, 1);
+  if(list.length) store[ticker] = list; else delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.objectifsAnalystes', JSON.stringify(store)); }catch(e){}
+}
+function autresObjectifsHtml(ticker, devise){
+  const list = loadObjectifsAnalystes()[ticker] || [];
+  const rows = list.map((o, i) => {
+    const isUrl = /^https?:\/\//i.test(o.source || '');
+    const srcHtml = o.source
+      ? (isUrl ? `<a href="${o.source}" target="_blank" rel="noopener">source ↗</a>` : `<span style="color:var(--ink-muted);">${o.source}</span>`)
+      : '<span style="color:var(--ink-muted);">(source non précisée)</span>';
+    return `<div class="hist-source">
+      <span><b>${fmt(o.value)} ${devise}</b></span>
+      ${srcHtml}
+      <span style="font-size:.72rem; color:var(--ink-muted);">saisi le ${frDate(o.date)}</span>
+      <button class="hist-reset" data-action="remove-objectif-analyste" data-ticker="${ticker}" data-index="${i}" style="margin:0;">retirer</button>
+    </div>`;
+  }).join('');
+  let summary = '';
+  if(list.length >= 2){
+    const vals = list.map(o => o.value);
+    const min = Math.min(...vals), max = Math.max(...vals), avg = vals.reduce((a,b)=>a+b,0) / vals.length;
+    summary = `<div class="hist-hint">Fourchette des objectifs saisis : ${fmt(min)} – ${fmt(max)} ${devise} (moyenne ${fmt(avg)} ${devise})</div>`;
+  }
+  return `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+    <div style="font-size:.8rem; color:var(--ink-2); margin-bottom:4px;">Autres objectifs (analystes tiers, en complément de celui ci-dessus) :</div>
+    ${rows}
+    ${summary}
+    <div class="hist-source">
+      <input type="number" step="0.01" class="objectifAnalysteValueInput" data-ticker="${ticker}" placeholder="Objectif" style="max-width:110px;">
+      <input type="text" class="objectifAnalysteSourceInput" data-ticker="${ticker}" placeholder="Source (nom, texte ou URL)">
+      <button data-action="add-objectif-analyste" data-ticker="${ticker}">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+// Dividendes : tableau (année en cours + jusqu'à 3 estimations, comme sur la
+// fiche Boursorama) saisi via copier-coller, sur le même principe que la
+// saisie de l'historique ci-dessous (parseBoursoramaPaste) — recherche des
+// libellés de ligne connus n'importe où dans le texte collé (les cellules
+// copiées depuis Boursorama arrivent souvent avec des sauts de ligne au
+// milieu d'un même libellé, ex. "Dividende" puis "par action" sur deux
+// lignes), puis lecture des nombres entre deux libellés consécutifs.
+const DIVIDEND_ROW_PATTERNS = [
+  {key:'dividende', re:/Dividende\s*par\s*action/i},
+  {key:'rendement', re:/Rendement/i},
+  {key:'bnpa',      re:/B[ée]n[ée]fice\s*net\s*par\s*action/i},
+  {key:'per',       re:/\bPER\b/i},
+];
+const DIVIDEND_METRICS = [
+  {key:'dividende', label:'Dividende / action'},
+  {key:'rendement', label:'Rendement'},
+  {key:'bnpa',      label:'Bénéfice net / action'},
+  {key:'per',       label:'PER'},
+];
+const DIVIDEND_MAX_COLUMNS = 4;
+
+function parseDividendePaste(text){
+  if(!text) return {columns: [], rows: {}};
+  const found = DIVIDEND_ROW_PATTERNS.map(p => {
+    const m = p.re.exec(text);
+    return m ? {key: p.key, start: m.index, end: m.index + m[0].length} : null;
+  }).filter(Boolean).sort((a,b) => a.start - b.start);
+  if(!found.length) return {columns: [], rows: {}};
+  // En-tête (années / "Estim. AAAA") : tout ce qui précède le premier
+  // libellé de ligne reconnu.
+  const headerSegment = text.slice(0, found[0].start);
+  const yearMatches = [...headerSegment.matchAll(/(Estim\.?\s*)?(\d{4})/gi)];
+  const columns = yearMatches.map(m => (m[1] ? 'Estim. ' : '') + m[2]);
+  const rows = {};
+  found.forEach((f, i) => {
+    const segEnd = (i + 1 < found.length) ? found[i+1].start : text.length;
+    const segment = text.slice(f.end, segEnd);
+    const nums = (segment.match(/-?\d[\d\s ]*[.,]\d+/g) || [])
+      .map(s => parseFloat(s.replace(/[\s ]/g, '').replace(',', '.')));
+    rows[f.key] = nums;
+  });
+  return {columns, rows};
+}
+
+function fillDividendInputs(ticker, parsed){
+  (parsed.columns || []).forEach((label, i) => {
+    if(i >= DIVIDEND_MAX_COLUMNS) return;
+    const labelEl = document.querySelector(`.divColLabel[data-ticker="${ticker}"][data-col="${i}"]`);
+    if(labelEl) labelEl.value = label;
+  });
+  DIVIDEND_METRICS.forEach(m => {
+    (parsed.rows[m.key] || []).forEach((v, i) => {
+      if(i >= DIVIDEND_MAX_COLUMNS || v === undefined || isNaN(v)) return;
+      const el = document.querySelector(`.divValInput[data-ticker="${ticker}"][data-metric="${m.key}"][data-col="${i}"]`);
+      if(el) el.value = v;
+    });
+  });
+}
+
+function readDividendForm(ticker){
+  const columns = [];
+  const rows = {};
+  DIVIDEND_METRICS.forEach(m => rows[m.key] = []);
+  for(let i=0; i<DIVIDEND_MAX_COLUMNS; i++){
+    const labelEl = document.querySelector(`.divColLabel[data-ticker="${ticker}"][data-col="${i}"]`);
+    const label = labelEl ? labelEl.value.trim() : '';
+    let colHasValue = false;
+    const colVals = {};
+    DIVIDEND_METRICS.forEach(m => {
+      const el = document.querySelector(`.divValInput[data-ticker="${ticker}"][data-metric="${m.key}"][data-col="${i}"]`);
+      const v = (el && el.value.trim() !== '') ? Number(el.value) : NaN;
+      if(!isNaN(v)){ colVals[m.key] = v; colHasValue = true; }
+    });
+    if(!label && !colHasValue) continue; // colonne vide, ignorée
+    columns.push(label || ('Col. ' + (columns.length + 1)));
+    DIVIDEND_METRICS.forEach(m => rows[m.key].push(colVals[m.key] !== undefined ? colVals[m.key] : null));
+  }
+  return {columns, rows};
+}
+
+function loadDividendes(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.dividendes') || '{}'); }catch(e){ return {}; }
+}
+function saveDividendes(ticker, data){
+  const store = loadDividendes();
+  if(data && data.columns && data.columns.length) store[ticker] = data; else delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.dividendes', JSON.stringify(store)); }catch(e){}
+}
+function loadDividendesExceptionnels(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.dividendesExceptionnels') || '{}'); }catch(e){ return {}; }
+}
+function addDividendeExceptionnel(ticker, montant, dateVersement){
+  const store = loadDividendesExceptionnels();
+  const list = store[ticker] || [];
+  list.push({ montant, date: dateVersement });
+  store[ticker] = list;
+  try{ localStorage.setItem('stockAdvice.dividendesExceptionnels', JSON.stringify(store)); }catch(e){}
+}
+function removeDividendeExceptionnel(ticker, index){
+  const store = loadDividendesExceptionnels();
+  const list = store[ticker] || [];
+  list.splice(index, 1);
+  if(list.length) store[ticker] = list; else delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.dividendesExceptionnels', JSON.stringify(store)); }catch(e){}
+}
+
+// Bloc dividendes complet : tableau saisi/collé (année en cours + jusqu'à 3
+// estimations) + liste libre de dividendes exceptionnels/fractionnés
+// (montant + date de versement). Affiché aussi bien en cas de succès que
+// d'échec de l'API (comme analysteBox), ces données étant elles aussi
+// entièrement saisies à la main.
+function dividendBox(ticker, devise){
+  const saved = loadDividendes()[ticker];
+  const exceptionnels = loadDividendesExceptionnels()[ticker] || [];
+  const open = state.divOpenForms.has(ticker);
+
+  const savedTable = (saved && saved.columns && saved.columns.length)
+    ? `<table class="hist-table">
+        <thead><tr><th></th>${saved.columns.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${DIVIDEND_METRICS.map(m => `<tr><td>${m.label}</td>${(saved.rows[m.key]||[]).map(v => {
+          if(v===null || v===undefined) return '<td>—</td>';
+          if(m.key==='rendement') return `<td>${fmt(v,2)}%</td>`;
+          if(m.key==='per') return `<td>${fmt(v,2)}</td>`;
+          return `<td>${fmt(v,2)} ${devise}</td>`;
+        }).join('')}</tr>`).join('')}</tbody>
+      </table>`
+    : '<p class="hist-hint">Aucune donnée de dividende enregistrée pour le moment.</p>';
+
+  const colHeaders = Array.from({length: DIVIDEND_MAX_COLUMNS}, (_, i) =>
+    `<th><input type="text" class="divColLabel" data-ticker="${ticker}" data-col="${i}" placeholder="ex. 2026" style="width:72px; text-align:center;"></th>`
+  ).join('');
+  const metricRows = DIVIDEND_METRICS.map(m => `
+    <tr>
+      <td>${m.label}</td>
+      ${Array.from({length: DIVIDEND_MAX_COLUMNS}, (_, i) =>
+        `<td><input type="number" step="0.01" class="divValInput" data-ticker="${ticker}" data-metric="${m.key}" data-col="${i}"></td>`
+      ).join('')}
+    </tr>`).join('');
+
+  const excRows = exceptionnels.map((e, i) => `<div class="hist-source">
+      <span>${fmt(e.montant)} ${devise} — versé le ${frDate(e.date)}</span>
+      <button class="hist-reset" data-action="remove-dividende-exceptionnel" data-ticker="${ticker}" data-index="${i}" style="margin:0;">retirer</button>
+    </div>`).join('');
+
+  return `<div class="hist-block">
+    <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">💶 Dividendes</div>
+    ${savedTable}
+    <button class="hist-toggle" data-action="toggle-div-form" data-ticker="${ticker}">📋 ${saved ? 'Modifier les données de dividende' : 'Saisir les données de dividende'}</button>
+    <div ${open ? '' : 'hidden'}>
+      <p class="hist-hint">Collez ci-dessous le tableau des dividendes tel qu'il apparaît sur la fiche (années, dividende/action, rendement, bénéfice net/action, PER), puis cliquez sur « Analyser ». Corrigez ensuite chaque case si besoin avant d'enregistrer.</p>
+      <div class="hist-paste-row">
+        <textarea class="div-paste" data-ticker="${ticker}" placeholder="Collez ici le tableau des dividendes copié depuis la fiche"></textarea>
+        <button data-action="parse-dividend-paste" data-ticker="${ticker}">Analyser</button>
+      </div>
+      <table class="hist-table">
+        <thead><tr><th></th>${colHeaders}</tr></thead>
+        <tbody>${metricRows}</tbody>
+      </table>
+      <button data-action="save-dividend" data-ticker="${ticker}">Enregistrer</button>
+    </div>
+    <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+      <div style="font-size:.8rem; color:var(--ink-2); margin-bottom:4px;">Dividende fractionné / exceptionnel :</div>
+      ${excRows}
+      <div class="hist-source">
+        <input type="number" step="0.01" class="divExcMontantInput" data-ticker="${ticker}" placeholder="Montant" style="max-width:100px;">
+        <input type="date" class="divExcDateInput" data-ticker="${ticker}">
+        <button data-action="add-dividende-exceptionnel" data-ticker="${ticker}">Ajouter</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -653,8 +959,9 @@ function fmt(n, d=2){ return (n===null||n===undefined) ? '—' : Number(n).toLoc
 function currencySymbol(devise){ return devise==='EUR' ? '€' : (devise==='USD' ? '$' : (devise||'')); }
 
 function cardSkeleton(ticker){
+  const nomManuel = loadNomManuel()[ticker];
   return `<div class="card" data-ticker="${ticker}">
-    <div class="head"><div><div class="title">${ticker}</div><div class="subtitle">Chargement…</div></div>
+    <div class="head"><div><div class="title">${nomManuel || ticker}</div><div class="subtitle">${nomManuel ? ticker + ' · ' : ''}Chargement…</div></div>
     <button class="remove" onclick="removeTicker('${ticker}')">✕</button></div>
     <div class="loading">Interrogation du backend…</div>
   </div>`;
@@ -669,21 +976,29 @@ function cardContent(ticker, d, alertMsgs){
     // qui a chargé normalement. Le bouton « Réessayer » continue de retenter
     // l'API en tâche de fond, sans effacer ce que vous avez saisi.
     const deviseGuess = currencySymbol(guessDevise(ticker));
+    const nomManuel = loadNomManuel()[ticker];
     const manualSeance = getManualLatestSeance(ticker);
     const cours = manualSeance ? manualSeance.clo : null;
+    const todayStr0 = isoDate(new Date());
+    const dailyVarPct0 = (manualSeance && manualSeance.date === todayStr0 && manualSeance.var_pct !== undefined)
+      ? manualSeance.var_pct : null;
     const objManuel = loadObjectifManuel()[ticker];
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
     const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
     const priceLine = cours !== null
-      ? `<div class="price">${fmt(cours)} ${deviseGuess}</div>
+      ? `<div class="price">${fmt(cours)} ${deviseGuess} ${variationBadge(dailyVarPct0)}</div>
          <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>`
       : '';
     const objectifLine = hasObjManuel
-      ? `<div class="kv"><span>Objectif 3 mois (saisi) : <b>${fmt(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${potentielPct>0?'+':''}${fmt(potentielPct)}%)` : ''}</span></div>`
+      ? `<div class="kv"><span>Objectif 3 mois (saisi) : <b>${fmt(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
       : '';
     return `<div class="card" data-ticker="${ticker}">
-      <div class="head"><div class="title">${ticker}</div>
+      <div class="head"><div>
+          <div class="title">${nomManuel || ticker}</div>
+          ${nomManuel ? `<div class="subtitle">${ticker}</div>` : ''}
+        </div>
         <div style="display:flex; gap:6px; align-items:center;">
+          <button class="remove" onclick="renameTicker('${ticker}')" title="Saisir/modifier le nom affiché">✏️</button>
           <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
           <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
         </div>
@@ -693,8 +1008,10 @@ function cardContent(ticker, d, alertMsgs){
       <div class="error">${d.error.message || 'Erreur inconnue.'}
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
-      <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : lien vers la fiche, séances, objectif de cours et consensus.</p>
+      <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : nom, lien vers la fiche, séances, objectif de cours, consensus, éligibilité PEA et dividendes.</p>
       ${analysteBox(ticker, deviseGuess)}
+      ${peaBox(ticker, null)}
+      ${dividendBox(ticker, deviseGuess)}
       ${historiqueBox(ticker, cours)}
     </div>`;
   }
@@ -706,13 +1023,7 @@ function cardContent(ticker, d, alertMsgs){
     : '';
   const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
   const devise = currencySymbol(d.devise);
-  const pea = d.eligibilite_pea || {};
-  const peaLabel = pea.estime===true ? 'Oui' : (pea.estime===false ? 'Non' : 'Indéterminé');
-  const peaColor = pea.estime===true ? 'var(--good)' : (pea.estime===false ? 'var(--bad)' : 'var(--warn)');
-  const peaBox = `<div class="kv" style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
-      <span>Éligible PEA (estimation) : <b style="color:${peaColor}">${peaLabel}</b>${pea.pays_siege ? ' — siège social : ' + pea.pays_siege : ''}</span>
-      ${pea.avertissement ? `<span style="font-size:.78rem; color:var(--ink-muted);">⚠ ${pea.avertissement}</span>` : ''}
-    </div>`;
+  const nomManuel = loadNomManuel()[ticker];
   const costBasis = loadCostBasis()[ticker];
   // Le cours affiché privilégie TOUJOURS votre dernière séance saisie
   // manuellement quand elle existe (voir la discussion sur la fiabilité des
@@ -721,6 +1032,19 @@ function cardContent(ticker, d, alertMsgs){
   // vous avez vous-même vérifiée qui fait foi, pas l'estimation automatique.
   const manualSeance = getManualLatestSeance(ticker);
   const cours = manualSeance ? manualSeance.clo : d.seance.close;
+  // Variation du jour à afficher juste à côté du cours (vert/rouge/noir) :
+  // votre séance du jour si vous l'avez déjà saisie, sinon celle renvoyée par
+  // le backend (mais seulement tant qu'aucune séance manuelle n'existe du
+  // tout — dès qu'une séance manuelle plus ancienne existe, le cours affiché
+  // n'est déjà plus "celui du jour", donc on n'affiche alors aucune variation
+  // du jour trompeuse : voir priceFreshnessNote pour la transparence sur la
+  // date réelle du cours affiché dans ce cas).
+  const todayStr = isoDate(new Date());
+  const dailyVarPct = (manualSeance && manualSeance.date === todayStr && manualSeance.var_pct !== undefined)
+    ? manualSeance.var_pct
+    : (!manualSeance && d.seance && d.seance.variation_jour_pct !== undefined && d.seance.variation_jour_pct !== null)
+      ? d.seance.variation_jour_pct
+      : null;
   // Objectif de cours 3 mois : votre saisie manuelle (ex. copiée depuis
   // Boursorama) prend systématiquement le pas sur l'estimation du backend,
   // et le potentiel (%) est toujours recalculé ICI par rapport au cours
@@ -774,21 +1098,23 @@ function cardContent(ticker, d, alertMsgs){
   }
   return `<div class="card" data-ticker="${ticker}">
     <div class="head">
-      <div><div class="title">${d.nom || ticker}</div><div class="subtitle">${ticker}</div></div>
+      <div><div class="title">${nomManuel || d.nom || ticker}</div><div class="subtitle">${ticker}</div></div>
       <div style="display:flex; gap:6px; align-items:center;">
+        <button class="remove" onclick="renameTicker('${ticker}')" title="Saisir/modifier le nom affiché">✏️</button>
         <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
         <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
       </div>
     </div>
     <span class="badge ${d.conseil}">${d.conseil}</span>
-    <div class="price">${fmt(cours)} ${devise}</div>
+    <div class="price">${fmt(cours)} ${devise} ${variationBadge(dailyVarPct)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
-      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${potentielPct>0?'+':''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
+      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
     ${analysteBox(ticker, devise)}
-    ${peaBox}
+    ${peaBox(ticker, d.eligibilite_pea)}
+    ${dividendBox(ticker, devise)}
     ${positionBox}
     <div class="justif">${justif}</div>
     ${bascule}
@@ -1043,15 +1369,89 @@ document.getElementById('grid').addEventListener('change', e => {
     return;
   }
 });
+document.getElementById('grid').addEventListener('change', e => {
+  const peaInput = e.target.closest('.peaManuelCheckbox');
+  if(!peaInput) return;
+  savePeaManuel(peaInput.dataset.ticker, peaInput.checked);
+  render();
+});
+document.getElementById('grid').addEventListener('click', e => {
+  const addObjBtn = e.target.closest('[data-action="add-objectif-analyste"]');
+  if(addObjBtn){
+    const t = addObjBtn.dataset.ticker;
+    const valEl = document.querySelector(`.objectifAnalysteValueInput[data-ticker="${t}"]`);
+    const srcEl = document.querySelector(`.objectifAnalysteSourceInput[data-ticker="${t}"]`);
+    const value = (valEl && valEl.value.trim() !== '') ? Number(valEl.value) : NaN;
+    if(isNaN(value)){ alert("Merci de renseigner une valeur numérique pour l'objectif."); return; }
+    addObjectifAnalyste(t, value, srcEl ? srcEl.value : '');
+    render();
+    return;
+  }
+  const rmObjBtn = e.target.closest('[data-action="remove-objectif-analyste"]');
+  if(rmObjBtn){
+    removeObjectifAnalyste(rmObjBtn.dataset.ticker, Number(rmObjBtn.dataset.index));
+    render();
+    return;
+  }
+  const toggleDivBtn = e.target.closest('[data-action="toggle-div-form"]');
+  if(toggleDivBtn){
+    const t = toggleDivBtn.dataset.ticker;
+    if(state.divOpenForms.has(t)) state.divOpenForms.delete(t); else state.divOpenForms.add(t);
+    render();
+    return;
+  }
+  const parseDivBtn = e.target.closest('[data-action="parse-dividend-paste"]');
+  if(parseDivBtn){
+    const t = parseDivBtn.dataset.ticker;
+    const textEl = document.querySelector(`.div-paste[data-ticker="${t}"]`);
+    const parsed = parseDividendePaste(textEl ? textEl.value : '');
+    fillDividendInputs(t, parsed);
+    return;
+  }
+  const saveDivBtn = e.target.closest('[data-action="save-dividend"]');
+  if(saveDivBtn){
+    const t = saveDivBtn.dataset.ticker;
+    const data = readDividendForm(t);
+    saveDividendes(t, data);
+    state.divOpenForms.delete(t);
+    render();
+    return;
+  }
+  const addExcBtn = e.target.closest('[data-action="add-dividende-exceptionnel"]');
+  if(addExcBtn){
+    const t = addExcBtn.dataset.ticker;
+    const montantEl = document.querySelector(`.divExcMontantInput[data-ticker="${t}"]`);
+    const dateEl = document.querySelector(`.divExcDateInput[data-ticker="${t}"]`);
+    const montant = (montantEl && montantEl.value.trim() !== '') ? Number(montantEl.value) : NaN;
+    const dateVal = dateEl ? dateEl.value : '';
+    if(isNaN(montant) || !dateVal){ alert('Merci de renseigner le montant et la date de versement.'); return; }
+    addDividendeExceptionnel(t, montant, dateVal);
+    render();
+    return;
+  }
+  const rmExcBtn = e.target.closest('[data-action="remove-dividende-exceptionnel"]');
+  if(rmExcBtn){
+    removeDividendeExceptionnel(rmExcBtn.dataset.ticker, Number(rmExcBtn.dataset.index));
+    render();
+    return;
+  }
+});
 document.getElementById('grid').addEventListener('keydown', e => {
   const ta = e.target.closest('.hist-paste');
-  if(!ta) return;
-  if(e.key === 'Enter' && !e.shiftKey){
+  if(ta && e.key === 'Enter' && !e.shiftKey){
     e.preventDefault();
     const t = ta.dataset.ticker;
     const periods = parseBoursoramaPaste(ta.value);
     fillSeedInputs(t, periods);
     renderSeedPreview(t);
+    return;
+  }
+  const dta = e.target.closest('.div-paste');
+  if(dta && e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    const t = dta.dataset.ticker;
+    const parsed = parseDividendePaste(dta.value);
+    fillDividendInputs(t, parsed);
   }
 });
 document.getElementById('grid').addEventListener('input', e => {
