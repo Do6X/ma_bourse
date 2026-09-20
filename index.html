@@ -97,6 +97,18 @@
   </div>
 
   <div class="config" style="margin-bottom:18px;">
+    <label style="display:block; margin-bottom:6px; font-weight:600;">Synchroniser mes données entre appareils</label>
+    <p class="hist-hint">Tout ce qui est saisi ici (valeurs suivies, séances, PEA, objectifs, dividendes...) reste uniquement sur cet appareil. Pour le retrouver ailleurs (ex. votre iPhone) : exportez un fichier ici, transférez-le vous-même (AirDrop, iCloud Drive, e-mail...), puis importez-le sur l'autre appareil.</p>
+    <div class="hist-paste-row" style="margin-top:0;">
+      <button id="exportDataBtn" type="button">⬇️ Exporter mes données (.json)</button>
+      <button id="importDataBtn" type="button">⬆️ Importer un fichier</button>
+      <input id="importDataFile" type="file" accept="application/json,.json" style="display:none;">
+    </div>
+    <p class="hist-hint" style="margin-top:4px;">⚠️ Importer un fichier <b>remplace entièrement</b> les données déjà présentes sur cet appareil (une confirmation vous sera demandée).</p>
+    <div id="syncDataResult" class="hist-hint" style="margin-top:-6px;"></div>
+  </div>
+
+  <div class="config" style="margin-bottom:18px;">
     <button class="hist-toggle" id="dailyUpdateToggle" type="button">📋 Mise à jour quotidienne des cours (tableau groupé)</button>
     <div id="dailyUpdatePanel" hidden style="margin-top:8px;">
       <p class="hist-hint">Pour chaque valeur, collez directement dans la case « Coller ici » la ligne correspondante copiée depuis la cote générale Boursorama (colonnes Dernier, Var., Ouv., +Haut, +Bas, Var. depuis le 1er janvier, Volume, séparées par des tabulations) — les colonnes se remplissent automatiquement dès le collage (le « (c) » à côté du cours de clôture est retiré automatiquement), corrigez si besoin, puis cliquez sur « Enregistrer tout » en bas du tableau. La date retenue est celle d'aujourd'hui pour toutes les valeurs.</p>
@@ -725,6 +737,60 @@ function daysBetweenIso(a, b){
 function isoDate(d){ return d.toISOString().slice(0,10); }
 function daysAgo(n){ const d = new Date(); d.setDate(d.getDate() - n); return d; }
 function startOfYear(){ const d = new Date(); return new Date(d.getFullYear(), 0, 1); }
+
+// ============ Export / import des données entre appareils ============
+// Tout ce qui est saisi dans ce widget vit uniquement dans le localStorage
+// de CET appareil (voir la note sous le champ URL du backend) — il n'y a
+// aucun serveur qui centralise vos données. Pour les retrouver sur un autre
+// appareil (ex. un iPhone), on exporte tout dans un fichier .json que vous
+// transférez vous-même (AirDrop, iCloud Drive, e-mail...), puis on le
+// réimporte là-bas. Toutes les clés utilisées par ce widget partagent le
+// préfixe "stockAdvice." : on les parcourt génériquement plutôt que d'en
+// maintenir une liste à la main, pour ne rien oublier si de nouvelles clés
+// sont ajoutées plus tard.
+function collectExportPayload(){
+  const data = {};
+  for(let i=0; i<localStorage.length; i++){
+    const key = localStorage.key(i);
+    if(key && key.startsWith('stockAdvice.')) data[key] = localStorage.getItem(key);
+  }
+  return { app: 'conseil-bourse', exportedAt: new Date().toISOString(), data };
+}
+
+function exportAllData(){
+  const payload = collectExportPayload();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `conseil-bourse-export-${isoDate(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Remplacement complet (pas une fusion) : on retire d'abord toutes les
+// données stockAdvice.* déjà présentes sur cet appareil avant d'appliquer
+// celles du fichier importé, pour qu'un ticker supprimé sur l'appareil
+// source ne "revienne" pas ici après import.
+function importAllData(jsonText){
+  let parsed;
+  try{ parsed = JSON.parse(jsonText); }
+  catch(e){ return { ok:false, error: "Fichier JSON invalide (pas un export valide)." }; }
+  const data = parsed && parsed.data;
+  if(!data || typeof data !== 'object') return { ok:false, error: "Format de fichier non reconnu (attendu : un export généré par ce widget)." };
+  const importKeys = Object.keys(data).filter(k => k.startsWith('stockAdvice.'));
+  if(!importKeys.length) return { ok:false, error: "Aucune donnée reconnue dans ce fichier." };
+  const existingKeys = [];
+  for(let i=0; i<localStorage.length; i++){
+    const key = localStorage.key(i);
+    if(key && key.startsWith('stockAdvice.')) existingKeys.push(key);
+  }
+  existingKeys.forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
+  importKeys.forEach(k => { try{ localStorage.setItem(k, data[k]); }catch(e){} });
+  return { ok:true, count: importKeys.length };
+}
 
 // Calcule, pour chaque période, la variation % et les plus haut/bas à
 // afficher : haut/bas combinent toujours le seed et vos séances saisies
@@ -1602,6 +1668,38 @@ document.getElementById('globalVerifCopyBtn').addEventListener('click', async ()
     fallback.focus();
     fallback.select();
   }
+});
+
+document.getElementById('exportDataBtn').addEventListener('click', () => {
+  exportAllData();
+  document.getElementById('syncDataResult').textContent = '✅ Fichier téléchargé — transférez-le sur votre autre appareil puis importez-le là-bas.';
+});
+
+document.getElementById('importDataBtn').addEventListener('click', () => {
+  document.getElementById('importDataFile').click();
+});
+
+document.getElementById('importDataFile').addEventListener('change', e => {
+  const file = e.target.files && e.target.files[0];
+  const resultEl = document.getElementById('syncDataResult');
+  if(!file) return;
+  if(!confirm("Importer ce fichier va REMPLACER toutes les données déjà présentes sur cet appareil (valeurs suivies, séances, PEA, objectifs, dividendes...). Continuer ?")){
+    e.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = importAllData(String(reader.result));
+    if(result.ok){
+      resultEl.textContent = `✅ ${result.count} donnée(s) importée(s) — rechargement de la page...`;
+      setTimeout(() => location.reload(), 800);
+    } else {
+      resultEl.textContent = `❌ ${result.error}`;
+    }
+  };
+  reader.onerror = () => { resultEl.textContent = '❌ Impossible de lire ce fichier.'; };
+  reader.readAsText(file);
+  e.target.value = '';
 });
 
 document.getElementById('grid').addEventListener('click', async e => {
