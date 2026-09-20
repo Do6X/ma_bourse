@@ -88,6 +88,36 @@ def _guess_devise_from_ticker(ticker: str) -> str:
     return "USD"
 
 
+# Repli local pour l'affichage du nom (pas la source de verite des donnees
+# de marche - uniquement utilise quand ni FMP ni Yahoo n'ont pu identifier la
+# societe, ce qui est frequent pour Euronext Paris avec le plan FMP gratuit,
+# cf. fetch_company_profile). Couvre les valeurs francaises les plus
+# courantes (CAC 40 et quelques autres) a titre de confort d'affichage
+# uniquement - une valeur absente de cette liste continue d'afficher son
+# ticker brut, sans que cela affecte le calcul (cours, indicateurs...).
+KNOWN_TICKER_NAMES = {
+    "ALO.PA": "Alstom", "MC.PA": "LVMH", "TTE.PA": "TotalEnergies",
+    "OR.PA": "L'Oreal", "SAN.PA": "Sanofi", "AIR.PA": "Airbus",
+    "BNP.PA": "BNP Paribas", "AI.PA": "Air Liquide", "SU.PA": "Schneider Electric",
+    "BN.PA": "Danone", "DG.PA": "Vinci", "EL.PA": "EssilorLuxottica",
+    "RMS.PA": "Hermes", "CS.PA": "AXA", "SGO.PA": "Saint-Gobain",
+    "ENGI.PA": "Engie", "VIE.PA": "Veolia", "CAP.PA": "Capgemini",
+    "STLAP.PA": "Stellantis", "KER.PA": "Kering", "PUB.PA": "Publicis Groupe",
+    "LR.PA": "Legrand", "ML.PA": "Michelin", "RI.PA": "Pernod Ricard",
+    "GLE.PA": "Societe Generale", "ACA.PA": "Credit Agricole",
+    "DSY.PA": "Dassault Systemes", "HO.PA": "Thales", "SW.PA": "Sodexo",
+    "URW.PA": "Unibail-Rodamco-Westfield", "WLN.PA": "Worldline",
+    "TEP.PA": "Teleperformance", "ORA.PA": "Orange", "EN.PA": "Bouygues",
+    "STMPA.PA": "STMicroelectronics",
+}
+
+
+def _guess_name_from_ticker(ticker: str) -> str:
+    """Repli final d'affichage : nom lisible pour les valeurs francaises les
+    plus courantes ; sinon le ticker brut (comportement precedent, inchange)."""
+    return KNOWN_TICKER_NAMES.get(ticker.upper(), ticker)
+
+
 def _fmp_key() -> Optional[str]:
     """Cle FMP : priorite au coffre chiffre (secrets_util), repli sur la
     variable d'environnement FMP_API_KEY pour le confort en developpement."""
@@ -108,8 +138,81 @@ class UpstreamUnavailable(Exception):
 # Recuperation des donnees (avec cache + logs + bascule tracee)
 # ---------------------------------------------------------------------------
 
+# Stooq (stooq.com) : source de cours historiques gratuite, sans cle API,
+# documentee et utilisee notamment par la bibliotheque pandas-datareader.
+# Testee ici comme alternative a l'API non officielle de Yahoo Finance pour
+# les places europeennes, ou Yahoo s'est montre parfois peu fiable (cours
+# fige/perime constate sur Alstom). Best-effort : en cas d'echec (place non
+# couverte, Stooq injoignable, format inattendu), on renvoie une liste vide
+# et fetch_yahoo_history bascule silencieusement sur Yahoo - aucune casse
+# possible pour les tickers deja fonctionnels (US notamment).
+STOOQ_COUNTRY_SUFFIX = {
+    ".PA": "fr", ".DE": "de", ".L": "uk", ".MI": "it", ".AS": "nl",
+    ".BR": "be", ".LS": "pt", ".SW": "ch",
+}
+# Nombre de seances approximatif par plage demandee (Stooq renvoie tout
+# l'historique disponible en un seul appel ; on le tronque a une fenetre
+# comparable a ce que Yahoo aurait renvoye pour ne pas fausser les
+# indicateurs techniques, qui sont sensibles a la longueur de la serie
+# fournie - cf. rsi14/macd, calcules sur l'integralite de `closes`).
+STOOQ_RANGE_DAYS = {"5d": 5, "1mo": 21, "3mo": 63, "6mo": 126, "9mo": 189, "1y": 252, "2y": 504}
+
+
+def _stooq_symbol(ticker: str) -> Optional[str]:
+    """Convertit un ticker au format Yahoo (ex. ALO.PA) vers le format Stooq
+    (ex. alo.fr). None si la place n'est pas dans notre liste couverte."""
+    upper = ticker.upper()
+    for suffix, country in STOOQ_COUNTRY_SUFFIX.items():
+        if upper.endswith(suffix):
+            return f"{upper[:-len(suffix)].lower()}.{country}"
+    return None
+
+
+def fetch_stooq_history(ticker: str, range_: str = "9mo") -> list[dict]:
+    symbol = _stooq_symbol(ticker)
+    if not symbol:
+        return []
+    try:
+        r = requests.get("https://stooq.com/q/d/l/", params={"s": symbol, "i": "d"},
+                          headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        text = r.text.strip()
+        if not text or "," not in text or text.lower().startswith("no data"):
+            logger.warning("stooq_history_empty ticker=%s symbol=%s", ticker, symbol)
+            return []
+        lines = text.splitlines()
+        header = lines[0].split(",")
+        rows = []
+        for line in lines[1:]:
+            parts = line.split(",")
+            if len(parts) != len(header):
+                continue
+            row = dict(zip(header, parts))
+            try:
+                rows.append({
+                    "date": row["Date"],
+                    "open": float(row["Open"]), "high": float(row["High"]),
+                    "low": float(row["Low"]), "close": float(row["Close"]),
+                    "volume": int(float(row["Volume"])) if row.get("Volume") else 0,
+                })
+            except (KeyError, ValueError):
+                continue
+        if not rows:
+            return []
+        days = STOOQ_RANGE_DAYS.get(range_, 189)
+        rows = rows[-days:]
+        logger.info("stooq_history_ok ticker=%s symbol=%s rows=%d", ticker, symbol, len(rows))
+        return rows
+    except Exception as e:
+        logger.warning("stooq_history_failed ticker=%s symbol=%s error=%s", ticker, symbol, e)
+        return []
+
+
 def fetch_yahoo_history(ticker: str, range_: str = "9mo") -> list[dict]:
     def _do_fetch():
+        stooq_rows = fetch_stooq_history(ticker, range_)
+        if stooq_rows:
+            return stooq_rows
         url = YAHOO_CHART_URL.format(ticker=ticker)
         t0 = time.time()
         r = requests.get(url, params={"interval": "1d", "range": range_}, headers=HEADERS, timeout=10)
@@ -427,7 +530,7 @@ def fetch_company_profile(ticker: str) -> dict:
             logger.warning("yahoo_profile_timeout ticker=%s timeout_s=%s", ticker, YFINANCE_TIMEOUT_SECONDS)
         except Exception as e:
             logger.warning("yahoo_profile_failed ticker=%s error=%s", ticker, e)
-        return {"source": "none", "company_name": ticker, "sector": None, "country": None,
+        return {"source": "none", "company_name": _guess_name_from_ticker(ticker), "sector": None, "country": None,
                 "currency": _guess_devise_from_ticker(ticker)}
 
     value, from_cache = cache.get_or_set(f"profile:{ticker}", TTL_HISTORIQUE, _do_fetch)
@@ -534,11 +637,23 @@ def analyze_stock(ticker: str) -> dict:
     conseil = decision_conseil(score_global, r14, news["tonalite"])
     risque = niveau_risque(vol_pct, secteur, debt_eq, market_cap, news["tonalite"])
 
-    obj_technique = sma50 * (1 + (sma50 - sma200) / sma200 * 0.5) if (sma50 and sma200) else price
+    # Chacune des trois composantes de l'objectif retombe sur `price` (le
+    # cours actuel) quand la donnee source lui manque (SMA50/200, EPS, ou
+    # consensus analystes FMP - frequemment indisponibles hors US avec le
+    # plan gratuit, cf. README). Sans ce suivi, un ticker qui n'a AUCUNE de
+    # ces trois donnees affichait un "objectif 3 mois" qui n'etait en realite
+    # que le cours actuel recopie trois fois - une fausse precision a corriger
+    # cote affichage plutot que cote calcul (les calculs eux-memes restent
+    # corrects avec les donnees disponibles).
+    technique_disponible = bool(sma50 and sma200)
+    obj_technique = sma50 * (1 + (sma50 - sma200) / sma200 * 0.5) if technique_disponible else price
     per_cible = min(per, 30) if per else 20
-    obj_fondamental = eps_ttm * per_cible * 1.05 if eps_ttm else price
+    fondamental_disponible = bool(eps_ttm)
+    obj_fondamental = eps_ttm * per_cible * 1.05 if fondamental_disponible else price
+    consensus_disponible = target.get("targetConsensus") is not None
     obj_consensus = target.get("targetConsensus", price)
     objectif_3m = round(obj_technique * 0.3 + obj_fondamental * 0.3 + obj_consensus * 0.4, 2)
+    nb_composantes_dispo = sum([technique_disponible, fondamental_disponible, consensus_disponible])
 
     div_annuel = round(sum(d.get("dividend", 0) for d in dividends[:4]), 4) if dividends else 0
 
@@ -562,7 +677,16 @@ def analyze_stock(ticker: str) -> dict:
         "conseil": conseil,
         "niveau_risque": risque["final"], "niveau_risque_detail": risque["detail"],
         "objectif_3_mois": {"retenu": objectif_3m,
-                            "potentiel_rendement_pct": round((objectif_3m - price) / price * 100, 2)},
+                            "potentiel_rendement_pct": round((objectif_3m - price) / price * 100, 2),
+                            "fiable": nb_composantes_dispo > 0,
+                            "composantes_disponibles": nb_composantes_dispo,
+                            "avertissement": (
+                                None if nb_composantes_dispo > 0 else
+                                "Aucune donnee de reference disponible (moyennes mobiles, resultat par "
+                                "action, consensus analystes) pour cette valeur avec le plan API actuel "
+                                "- cet objectif n'est pas significatif, il ne fait que refleter le cours "
+                                "actuel. A ignorer pour cette valeur."
+                            )},
         "dividendes": {"annuel_en_cours": div_annuel,
                       "rendement_pct": round(div_yield * 100, 2) if div_yield else None,
                       "prochaine_date_versement": dividends[0].get("paymentDate") if dividends else None},
