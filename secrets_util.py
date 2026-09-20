@@ -25,10 +25,11 @@ Usage :
     # 3) A l'execution, le backend appelle get_secret("FMP_API_KEY") qui
     #    dechiffre a la volee (la cle en clair ne touche jamais le disque).
 
-IMPORTANT : la cle qui a servi a chiffrer cx4IoB9vMpJXGSBy3nNz97M1pmxsps26
-(transmise en clair dans la conversation d'origine) doit etre consideree comme
-compromise -> generez une nouvelle cle FMP depuis votre tableau de bord FMP et
-chiffrez UNIQUEMENT la nouvelle cle avec cet outil.
+IMPORTANT : toute cle FMP qui a pu transiter en clair (chat, capture
+d'ecran, etc.) doit etre consideree comme compromise -> generez une nouvelle
+cle FMP depuis votre tableau de bord FMP et chiffrez UNIQUEMENT la nouvelle
+cle avec cet outil. Ne collez JAMAIS la valeur d'une cle API en clair dans ce
+fichier ni dans aucun commentaire du code source (meme temporairement).
 """
 
 from __future__ import annotations
