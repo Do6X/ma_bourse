@@ -787,7 +787,13 @@ function readSeanceForm(ticker){
   // Volume : facultatif (pas toujours affiché selon la source), on ne le garde
   // que si vous l'avez saisi plutôt que de stocker NaN. La variation % n'est
   // pas saisie ici : elle est calculée automatiquement par upsertSeance().
+  // Le champ attend désormais le nombre brut d'actions tel qu'affiché par
+  // Boursorama (copier-coller sans aucune conversion à faire soi-même) :
+  // on le divise ici par 1000 pour rejoindre la convention "en milliers"
+  // utilisée partout ailleurs dans la fiche (mêmes calcul que
+  // parseCoteGeneraleLine pour le tableau de mise à jour groupée).
   if(isNaN(seance.volume)) delete seance.volume;
+  else seance.volume = Math.round(seance.volume / 1000);
   return seance;
 }
 
@@ -1059,7 +1065,7 @@ function historiqueBox(ticker, currentClose){
       <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="haut" placeholder="Plus haut">
       <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="bas" placeholder="Plus bas">
       <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="clo" placeholder="Clôture">
-      <input type="number" step="1" min="0" class="histSeanceInput" data-ticker="${ticker}" data-field="volume" placeholder="Volume (K)">`;
+      <input type="number" step="1" min="0" class="histSeanceInput" data-ticker="${ticker}" data-field="volume" placeholder="Volume (nb actions)" title="Collez ici le nombre brut d'actions échangées tel qu'affiché par Boursorama (ex. 42096) — converti automatiquement en milliers, aucun calcul à faire vous-même" style="width:110px;">`;
 
   if(!entry || !entry.seed){
     const open = state.histOpenForms.has(ticker);
