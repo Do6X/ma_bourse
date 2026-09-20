@@ -223,11 +223,16 @@ function readSeanceForm(ticker){
   const date = dateEl ? dateEl.value : '';
   const get = f => {
     const el = document.querySelector(`.histSeanceInput[data-ticker="${ticker}"][data-field="${f}"]`);
-    const v = el ? Number(el.value) : NaN;
-    return v;
+    // Un champ vide doit compter comme "non saisi" (NaN), pas comme 0 —
+    // Number('') vaut 0 en JavaScript, d'où ce test explicite.
+    return (el && el.value.trim() !== '') ? Number(el.value) : NaN;
   };
-  const seance = { date, ouv: get('ouv'), haut: get('haut'), bas: get('bas'), clo: get('clo') };
+  const seance = { date, ouv: get('ouv'), haut: get('haut'), bas: get('bas'), clo: get('clo'), volume: get('volume') };
   if(!seance.date || [seance.ouv, seance.haut, seance.bas, seance.clo].some(v => isNaN(v))) return null;
+  // Volume : facultatif (pas toujours affiché selon la source), on ne le garde
+  // que si vous l'avez saisi plutôt que de stocker NaN. La variation % n'est
+  // pas saisie ici : elle est calculée automatiquement par upsertSeance().
+  if(isNaN(seance.volume)) delete seance.volume;
   return seance;
 }
 
@@ -236,7 +241,9 @@ function readSeedForm(ticker){
   HIST_PERIODS.forEach(p => {
     const get = f => {
       const el = document.querySelector(`.histSeedInput[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
-      const v = el ? Number(el.value) : NaN;
+      // Un champ vide doit compter comme "non saisi", pas comme 0 —
+      // Number('') vaut 0 en JavaScript, d'où ce test explicite.
+      const v = (el && el.value.trim() !== '') ? Number(el.value) : NaN;
       return isNaN(v) ? undefined : v;
     };
     periods[p.key] = { var_pct: get('var_pct'), haut: get('haut'), bas: get('bas') };
@@ -323,6 +330,20 @@ function upsertSeance(ticker, seance){
   const store = loadHistoriqueStore();
   if(!store[ticker]) store[ticker] = { seed: null, seances: [] };
   const list = store[ticker].seances || [];
+  // Variation % de la séance : calculée automatiquement par rapport à la clôture
+  // de la séance précédente déjà enregistrée pour cette valeur (jamais saisie à la
+  // main, pour qu'elle reste toujours cohérente avec vos propres clôtures) —
+  // indisponible pour la toute première séance enregistrée (aucune clôture de
+  // référence locale à comparer).
+  const previous = list
+    .filter(s => s.date < seance.date)
+    .sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0))
+    .pop();
+  if(previous && previous.clo){
+    seance.var_pct = ((seance.clo - previous.clo) / previous.clo) * 100;
+  } else {
+    delete seance.var_pct;
+  }
   const idx = list.findIndex(s => s.date === seance.date);
   if(idx >= 0) list[idx] = seance; else list.push(seance);
   store[ticker].seances = list;
@@ -345,7 +366,8 @@ function historiqueBox(ticker, currentClose){
       <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="ouv" placeholder="Ouverture">
       <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="haut" placeholder="Plus haut">
       <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="bas" placeholder="Plus bas">
-      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="clo" placeholder="Clôture">`;
+      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="clo" placeholder="Clôture">
+      <input type="number" step="1" min="0" class="histSeanceInput" data-ticker="${ticker}" data-field="volume" placeholder="Volume (K)">`;
 
   if(!entry || !entry.seed){
     const open = state.histOpenForms.has(ticker);
@@ -377,7 +399,18 @@ function historiqueBox(ticker, currentClose){
   }
 
   const variations = computeVariations(ticker, currentClose) || [];
-  const already = (entry.seances || []).some(s => s.date === todayStr);
+  const todaySeance = (entry.seances || []).find(s => s.date === todayStr);
+  const already = !!todaySeance;
+  const seanceSummary = todaySeance ? [
+      `O ${fmt(todaySeance.ouv)}`,
+      `H ${fmt(todaySeance.haut)}`,
+      `B ${fmt(todaySeance.bas)}`,
+      `C ${fmt(todaySeance.clo)}`,
+      todaySeance.var_pct !== undefined
+        ? `Var. <span style="color:${todaySeance.var_pct>0?'var(--good)':(todaySeance.var_pct<0?'var(--bad)':'var(--warn)')}">${todaySeance.var_pct>0?'+':''}${fmt(todaySeance.var_pct,2)}%</span>`
+        : null,
+      todaySeance.volume !== undefined ? `Vol. ${fmt(todaySeance.volume,0)} K` : null,
+    ].filter(Boolean).join(' · ') : '';
   const rowsHtml = variations.map(v => `
     <tr>
       <td>${v.label}</td>
@@ -393,7 +426,7 @@ function historiqueBox(ticker, currentClose){
       <tbody>${rowsHtml}</tbody>
     </table>
     ${already
-      ? `<div class="hist-done">Séance du ${todayStr} déjà enregistrée.</div>`
+      ? `<div class="hist-done">Séance du ${todayStr} déjà enregistrée — ${seanceSummary}</div>`
       : `<div class="hist-seance-row">${seanceFields}<button data-action="add-seance" data-ticker="${ticker}">Ajouter</button></div>`}
     <button class="hist-reset" data-action="reset-seed" data-ticker="${ticker}">Ré-saisir les valeurs de référence</button>
   </div>`;
