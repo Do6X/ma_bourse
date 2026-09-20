@@ -1013,6 +1013,7 @@ function cardContent(ticker, d, alertMsgs){
       ${peaBox(ticker, null)}
       ${dividendBox(ticker, deviseGuess)}
       ${historiqueBox(ticker, cours)}
+      ${verifBox(ticker)}
     </div>`;
   }
   const justif = `Score global ${fmt(d.scoring.global,1)}/10 (technique ${fmt(d.scoring.technique,1)}, `+
@@ -1121,6 +1122,7 @@ function cardContent(ticker, d, alertMsgs){
     ${objectifNonFiable}
     ${alertsHtml}
     ${historiqueBox(ticker, cours)}
+    ${verifBox(ticker)}
   </div>`;
 }
 
@@ -1196,6 +1198,89 @@ document.getElementById('refreshBtn').addEventListener('click', refreshAll);
 // tapée — pensé pour être collé tel quel dans une conversation avec Claude.
 // Rien n'est envoyé automatiquement nulle part : c'est un copier-coller
 // volontaire, à l'initiative de l'utilisateur (voir hist-hint associé).
+// Vérification d'une fiche par rapport à Boursorama : le widget (page
+// statique) ne peut pas appeler Claude tout seul, donc ce bouton ne
+// "vérifie" rien automatiquement — il copie un résumé complet de tout ce
+// qui a été saisi pour CETTE valeur (nom, séances, PEA, objectifs,
+// consensus, dividendes...), prêt à coller dans votre conversation avec
+// Claude, qui ouvre alors la fiche Boursorama (via le lien enregistré) et
+// compare chaque donnée. Volontairement exhaustif à chaque fois : à vous de
+// préciser, dans la conversation, si vous voulez un contrôle complet
+// (première saisie) ou rapide (cours/volume du jour au quotidien) — Claude
+// adapte sa vérification en fonction, pas la peine d'avoir deux boutons.
+function buildTickerVerificationText(ticker){
+  const entry = state.data[ticker];
+  const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+  const nomManuel = loadNomManuel()[ticker];
+  const nom = nomManuel || (raw && raw.nom) || '';
+  const devise = raw && raw.devise ? raw.devise : guessDevise(ticker);
+  const sourceUrl = loadSourceUrls()[ticker] || '';
+  const manualSeance = getManualLatestSeance(ticker);
+  const peaManuel = loadPeaManuel()[ticker] === true;
+  const pea = raw ? raw.eligibilite_pea : null;
+  const objManuel = loadObjectifManuel()[ticker];
+  const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
+  const objectifRetenu = hasObjManuel ? objManuel : (raw && raw.objectif_3_mois ? raw.objectif_3_mois.retenu : null);
+  const consManuel = loadConsensusManuel()[ticker];
+  const autresObjectifs = loadObjectifsAnalystes()[ticker] || [];
+  const dividendes = loadDividendes()[ticker];
+  const exceptionnels = loadDividendesExceptionnels()[ticker] || [];
+  const histEntry = loadHistoriqueStore()[ticker];
+  const dernieresSeances = (histEntry && histEntry.seances || [])
+    .slice().sort((a,b) => a.date < b.date ? 1 : -1).slice(0, 5);
+
+  const lines = [];
+  lines.push(`Vérification demandée pour ${ticker}${nom ? ' (' + nom + ')' : ''}.`);
+  lines.push(sourceUrl ? `Fiche de référence : ${sourceUrl}` : 'Fiche de référence : (URL non enregistrée — à retrouver sur Boursorama).');
+  lines.push('');
+  lines.push("Merci d'ouvrir cette fiche et de comparer chaque donnée ci-dessous, en me signalant tout écart :");
+  lines.push('');
+  lines.push(`- Nom affiché : ${nom || '(aucun)'}${nomManuel ? ' [saisi manuellement]' : ' [deviné automatiquement]'}`);
+  lines.push(`- Dernière séance saisie : ${manualSeance
+    ? `${manualSeance.date} — O ${fmt(manualSeance.ouv)} / +H ${fmt(manualSeance.haut)} / +B ${fmt(manualSeance.bas)} / C ${fmt(manualSeance.clo)}${manualSeance.volume!==undefined ? ' / Vol. ' + fmt(manualSeance.volume,0) + 'K' : ''}`
+    : '(aucune séance saisie)'}`);
+  if(dernieresSeances.length > 1){
+    lines.push('- 5 dernières séances saisies : ' + dernieresSeances.map(s => `${s.date} : C ${fmt(s.clo)}`).join(' ; '));
+  }
+  lines.push(`- Éligibilité PEA : ${peaManuel ? 'confirmée par vous (Oui)' : `estimation automatique (${pea && pea.estime===true ? 'Oui' : (pea && pea.estime===false ? 'Non' : 'Indéterminé')})`}`);
+  lines.push(`- Objectif de cours (3 mois) : ${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu) + ' ' + devise : '(aucun)'}${hasObjManuel ? ' [saisi manuellement]' : ' [estimation automatique]'}`);
+  if(consManuel !== undefined && consManuel !== null) lines.push(`- Consensus analystes (Boursorama) : ${fmt(consManuel,2)}/5`);
+  if(autresObjectifs.length){
+    lines.push('- Autres objectifs saisis : ' + autresObjectifs.map(o => `${fmt(o.value)} ${devise} (source : ${o.source || 'n/a'})`).join(' ; '));
+  }
+  if(histEntry && histEntry.seed){
+    const periodesTxt = HIST_PERIODS.map(p => {
+      const v = histEntry.seed.periods[p.key];
+      return (v && v.var_pct !== undefined) ? `${p.label} ${v.var_pct>0?'+':''}${fmt(v.var_pct,2)}%` : null;
+    }).filter(Boolean).join(' ; ');
+    if(periodesTxt) lines.push(`- Historique de référence saisi le ${histEntry.seed.date} : ${periodesTxt}`);
+  }
+  if(dividendes && dividendes.columns && dividendes.columns.length){
+    lines.push('- Dividendes saisis :');
+    dividendes.columns.forEach((col, i) => {
+      const get = k => (dividendes.rows[k] && dividendes.rows[k][i] !== null && dividendes.rows[k][i] !== undefined) ? dividendes.rows[k][i] : null;
+      lines.push(`   · ${col} : dividende ${fmt(get('dividende'))} ${devise}, rendement ${fmt(get('rendement'))}%, BNPA ${fmt(get('bnpa'))} ${devise}, PER ${fmt(get('per'))}`);
+    });
+  }
+  if(exceptionnels.length){
+    lines.push('- Dividendes exceptionnels : ' + exceptionnels.map(e => `${fmt(e.montant)} ${devise} le ${frDate(e.date)}`).join(' ; '));
+  }
+  return lines.join('\n');
+}
+
+// Bouton de vérification par fiche — même mécanique de copie (presse-
+// papiers + repli en zone de texte) que le bouton « Poser une question »
+// général, mais scopée à une seule valeur et pensée pour être collée dans
+// une demande de contrôle plutôt qu'une question libre.
+function verifBox(ticker){
+  return `<div class="hist-block">
+    <button class="hist-toggle" data-action="copy-verif" data-ticker="${ticker}">🔍 Copier pour vérification Boursorama</button>
+    <p class="hist-hint">Copie tout ce qui a été saisi pour ${ticker} (nom, séances, PEA, objectifs, consensus, dividendes), à coller dans votre conversation avec Claude pour qu'il compare avec la fiche Boursorama.</p>
+    <div class="verifResult hist-hint" data-ticker="${ticker}" style="margin-top:-6px;"></div>
+    <textarea class="verifFallback hist-paste" data-ticker="${ticker}" style="display:none; margin-top:6px; min-height:100px;" readonly></textarea>
+  </div>`;
+}
+
 function buildPortfolioContext(question){
   const lines = ["Contexte de mon portefeuille suivi (widget Conseil d'investissement) :", ''];
   if(!state.tickers.length){
@@ -1246,6 +1331,23 @@ document.getElementById('askCopyBtn').addEventListener('click', async () => {
     fallback.value = text;
     fallback.focus();
     fallback.select();
+  }
+});
+
+document.getElementById('grid').addEventListener('click', async e => {
+  const btn = e.target.closest('[data-action="copy-verif"]');
+  if(!btn) return;
+  const t = btn.dataset.ticker;
+  const text = buildTickerVerificationText(t);
+  const resultEl = document.querySelector(`.verifResult[data-ticker="${t}"]`);
+  const fallback = document.querySelector(`.verifFallback[data-ticker="${t}"]`);
+  try{
+    await navigator.clipboard.writeText(text);
+    if(resultEl) resultEl.textContent = '✅ Copié — collez-le dans votre conversation avec Claude pour lancer la vérification.';
+    if(fallback) fallback.style.display = 'none';
+  }catch(err){
+    if(resultEl) resultEl.textContent = '⚠️ Copie automatique indisponible — sélectionnez le texte ci-dessous et copiez-le à la main.';
+    if(fallback){ fallback.style.display = 'block'; fallback.value = text; fallback.focus(); fallback.select(); }
   }
 });
 
