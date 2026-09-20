@@ -99,6 +99,16 @@
   </div>
   <p class="sub" style="margin-top:-14px;">Valeurs Euronext Paris : ajoutez le suffixe <code>.PA</code> (ex. <code>MC.PA</code> LVMH, <code>TTE.PA</code> TotalEnergies, <code>OR.PA</code> L'Oréal). Les fondamentaux/dividendes de ces valeurs peuvent rester indisponibles selon le plan API configuré côté backend — voir <code>README.md</code>.</p>
 
+  <div class="config" style="margin-bottom:18px;">
+    <button class="hist-toggle" id="bulkAddToggle" type="button">➕ Ajouter plusieurs valeurs d'un coup</button>
+    <div id="bulkAddPanel" hidden style="margin-top:8px;">
+      <p class="hist-hint">Collez une liste de tickers et/ou de noms d'actions connus (un par ligne, ou séparés par des virgules) — ex. <code>Alstom, LVMH, ALO.PA, TotalEnergies</code>. Le lien Boursorama est pré-rempli automatiquement pour les valeurs Euronext Paris reconnues (à vérifier/corriger si besoin).</p>
+      <textarea id="bulkAddInput" class="hist-paste" placeholder="Ex : Alstom, LVMH, TotalEnergies, ALO.PA"></textarea>
+      <button id="bulkAddBtn" type="button">Importer</button>
+      <div id="bulkAddResult" class="hist-hint" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
   <div id="grid" class="grid"></div>
 </div>
 
@@ -158,6 +168,48 @@ const HIST_PERIODS = [
   {key:'10ans', label:'10 ans',      days:3650},
 ];
 
+// Correspondance nom usuel -> ticker, utilisée uniquement par l'import groupé
+// ci-dessous : permet de coller directement des noms de sociétés (« Alstom »,
+// « LVMH »...) plutôt que d'avoir à chercher chaque code ticker. Volontairement
+// limitée aux valeurs fréquentes du CAC 40 / Euronext Paris — un nom absent de
+// cette liste est simplement signalé comme non reconnu, à ajouter à la main
+// avec son code ticker (aucune donnée n'est inventée).
+const KNOWN_NAME_TO_TICKER = {
+  'alstom': 'ALO.PA', 'lvmh': 'MC.PA', 'totalenergies': 'TTE.PA', 'total': 'TTE.PA',
+  "l'oreal": 'OR.PA', 'loreal': 'OR.PA', 'sanofi': 'SAN.PA', 'airbus': 'AIR.PA',
+  'bnp paribas': 'BNP.PA', 'bnp': 'BNP.PA', 'air liquide': 'AI.PA',
+  'schneider electric': 'SU.PA', 'schneider': 'SU.PA', 'danone': 'BN.PA',
+  'vinci': 'DG.PA', 'essilorluxottica': 'EL.PA', 'essilor': 'EL.PA',
+  'hermes': 'RMS.PA', 'axa': 'CS.PA', 'saint-gobain': 'SGO.PA', 'saint gobain': 'SGO.PA',
+  'engie': 'ENGI.PA', 'veolia': 'VIE.PA', 'capgemini': 'CAP.PA',
+  'stellantis': 'STLAP.PA', 'kering': 'KER.PA', 'publicis': 'PUB.PA', 'publicis groupe': 'PUB.PA',
+  'legrand': 'LR.PA', 'michelin': 'ML.PA', 'pernod ricard': 'RI.PA', 'pernod': 'RI.PA',
+  'societe generale': 'GLE.PA', 'credit agricole': 'ACA.PA',
+  'dassault systemes': 'DSY.PA', 'thales': 'HO.PA', 'sodexo': 'SW.PA',
+  'unibail-rodamco-westfield': 'URW.PA', 'unibail': 'URW.PA', 'worldline': 'WLN.PA',
+  'teleperformance': 'TEP.PA', 'orange': 'ORA.PA', 'bouygues': 'EN.PA',
+  'stmicroelectronics': 'STMPA.PA', 'stmicro': 'STMPA.PA',
+};
+
+function normalizeForMatch(s){
+  return s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+}
+
+// Résout un token saisi dans l'import groupé vers un ticker, ou signale qu'il
+// n'a pas pu être reconnu (jamais de ticker inventé) :
+// 1) nom connu (table ci-dessus) -> ticker correspondant ;
+// 2) sinon, s'il ressemble déjà à un ticker (majuscules/chiffres, éventuel
+//    suffixe de place, ex. ALO.PA, AAPL, 7203.T) -> pris tel quel ;
+// 3) sinon -> non résolu (l'utilisateur devra l'ajouter lui-même avec son code).
+function resolveTickerOrName(raw){
+  const cleaned = raw.trim();
+  if(!cleaned) return {ticker: null};
+  const known = KNOWN_NAME_TO_TICKER[normalizeForMatch(cleaned)];
+  if(known) return {ticker: known};
+  const looksLikeTicker = /^[A-Z0-9]{1,10}(\.[A-Z]{1,3})?$/.test(cleaned) || /\d/.test(cleaned) || cleaned.includes('.');
+  return looksLikeTicker ? {ticker: cleaned.toUpperCase()} : {ticker: null};
+}
+
 function loadHistoriqueStore(){
   try{ return JSON.parse(localStorage.getItem('stockAdvice.historique') || '{}'); }catch(e){ return {}; }
 }
@@ -171,6 +223,43 @@ function saveSourceUrl(ticker, url){
   const store = loadSourceUrls();
   if(url) store[ticker] = url; else delete store[ticker];
   try{ localStorage.setItem('stockAdvice.sourceUrl', JSON.stringify(store)); }catch(e){}
+}
+
+// Devine le lien de la fiche Boursorama d'une valeur Euronext Paris (suffixe
+// .PA) a partir de son ticker : Boursorama identifie chaque valeur par
+// "1rP" + le mnemonique boursier, qui correspond au prefixe du ticker avant
+// ".PA" pour toutes les valeurs verifiees a ce jour (CAC 40 et au-dela,
+// y compris des cas particuliers comme STMPA.PA). Reste une estimation :
+// le champ genere est toujours modifiable a la main si une valeur ne suit
+// pas ce schema. Aucune estimation n'est tentee pour les autres places
+// (suffixes autres que .PA), le schema n'ayant pas ete verifie pour elles.
+function guessBoursoramaUrl(ticker){
+  const upper = (ticker || '').toUpperCase();
+  if(!upper.endsWith('.PA')) return null;
+  const prefix = upper.slice(0, -3);
+  if(!prefix) return null;
+  return `https://www.boursorama.com/cours/1rP${prefix}/`;
+}
+
+// Dernière séance saisie manuellement pour une valeur (la plus récente par
+// date), si vous en avez déjà enregistré au moins une. C'est cette clôture-là
+// qui fait foi pour l'affichage dès qu'elle existe — voir cardContent().
+function getManualLatestSeance(ticker){
+  const store = loadHistoriqueStore();
+  const entry = store[ticker];
+  const seances = (entry && entry.seances || []).slice().sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+  return seances.length ? seances[seances.length - 1] : null;
+}
+
+function frDate(iso){
+  if(!iso) return null;
+  const parts = String(iso).split('-');
+  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : iso;
+}
+// Différence en jours calendaires entre deux dates ISO ("AAAA-MM-JJ"),
+// calculée en UTC pur pour éviter tout décalage lié au fuseau horaire local.
+function daysBetweenIso(a, b){
+  return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000);
 }
 
 function isoDate(d){ return d.toISOString().slice(0,10); }
@@ -500,7 +589,26 @@ function cardContent(ticker, d, alertMsgs){
       ${pea.avertissement ? `<span style="font-size:.78rem; color:var(--ink-muted);">⚠ ${pea.avertissement}</span>` : ''}
     </div>`;
   const costBasis = loadCostBasis()[ticker];
-  const cours = d.seance.close;
+  // Le cours affiché privilégie TOUJOURS votre dernière séance saisie
+  // manuellement quand elle existe (voir la discussion sur la fiabilité des
+  // sources gratuites, Yahoo/Stooq pouvant afficher un cours vieux de
+  // plusieurs jours pour certaines valeurs Euronext) : c'est la donnée que
+  // vous avez vous-même vérifiée qui fait foi, pas l'estimation automatique.
+  const manualSeance = getManualLatestSeance(ticker);
+  const cours = manualSeance ? manualSeance.clo : d.seance.close;
+  const priceDateIso = manualSeance ? manualSeance.date : (d.seance.date || null);
+  let priceFreshnessNote;
+  if(manualSeance){
+    priceFreshnessNote = `<span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(priceDateIso)}</span>`;
+  } else if(priceDateIso){
+    const todayIso = isoDate(new Date());
+    const ageDays = daysBetweenIso(priceDateIso, todayIso);
+    priceFreshnessNote = ageDays > 3
+      ? `<span style="font-size:.72rem; color:var(--bad);">⚠ cours API du ${frDate(priceDateIso)} — possiblement périmé, aucune séance saisie pour cette valeur</span>`
+      : `<span style="font-size:.72rem; color:var(--ink-muted);">cours API du ${frDate(priceDateIso)}</span>`;
+  } else {
+    priceFreshnessNote = '';
+  }
   let positionBox;
   if(costBasis){
     const pnlValeur = cours - costBasis;
@@ -532,7 +640,8 @@ function cardContent(ticker, d, alertMsgs){
       <button class="remove" onclick="removeTicker('${ticker}')">✕</button>
     </div>
     <span class="badge ${d.conseil}">${d.conseil}</span>
-    <div class="price">${fmt(d.seance.close)} ${devise}</div>
+    <div class="price">${fmt(cours)} ${devise}</div>
+    ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
       <span>Objectif 3 mois : <b>${fmt(d.objectif_3_mois.retenu)} ${devise}</b> (${d.objectif_3_mois.potentiel_rendement_pct>0?'+':''}${fmt(d.objectif_3_mois.potentiel_rendement_pct)}%)${d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : ''}</span>
@@ -605,12 +714,44 @@ document.getElementById('addBtn').addEventListener('click', () => {
   state.tickers.push(ticker);
   input.value = '';
   persistTickers();
+  const guessedUrl = guessBoursoramaUrl(ticker);
+  if(guessedUrl) saveSourceUrl(ticker, guessedUrl);
   render();
   loadTicker(ticker);
 });
 document.getElementById('tickerInput').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('addBtn').click(); });
 document.getElementById('apiBase').addEventListener('change', () => { persistApiBase(); checkHealth(); });
 document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+
+document.getElementById('bulkAddToggle').addEventListener('click', () => {
+  const panel = document.getElementById('bulkAddPanel');
+  panel.hidden = !panel.hidden;
+});
+document.getElementById('bulkAddBtn').addEventListener('click', () => {
+  const raw = document.getElementById('bulkAddInput').value;
+  const tokens = raw.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+  const added = [], skipped = [], unresolved = [];
+  tokens.forEach(tok => {
+    const { ticker } = resolveTickerOrName(tok);
+    if(!ticker){ unresolved.push(tok); return; }
+    if(state.tickers.includes(ticker)){ skipped.push(ticker); return; }
+    state.tickers.push(ticker);
+    const guessedUrl = guessBoursoramaUrl(ticker);
+    if(guessedUrl) saveSourceUrl(ticker, guessedUrl);
+    added.push(ticker);
+  });
+  if(added.length){
+    persistTickers();
+    render();
+    added.forEach(loadTicker);
+  }
+  const parts = [];
+  if(added.length) parts.push(`${added.length} valeur(s) ajoutée(s) : ${added.join(', ')}`);
+  if(skipped.length) parts.push(`déjà suivies (ignorées) : ${skipped.join(', ')}`);
+  if(unresolved.length) parts.push(`non reconnues, à ajouter manuellement avec leur code ticker : ${unresolved.join(', ')}`);
+  document.getElementById('bulkAddResult').textContent = parts.join(' — ') || 'Rien à importer.';
+  if(added.length) document.getElementById('bulkAddInput').value = '';
+});
 
 document.getElementById('grid').addEventListener('change', e => {
   const input = e.target.closest('.costBasisInput');
