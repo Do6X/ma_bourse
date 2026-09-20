@@ -132,6 +132,16 @@
     <textarea id="askCopyFallback" class="hist-paste" style="display:none; margin-top:6px; min-height:120px;" readonly></textarea>
   </div>
 
+  <div class="config" style="margin-bottom:18px;">
+    <label style="display:block; margin-bottom:6px; font-weight:600;">Vérification Boursorama — toutes les valeurs suivies</label>
+    <div class="hist-paste-row" style="margin-top:0;">
+      <button id="globalVerifCopyBtn" type="button">🔍 Copier pour vérification Boursorama (toutes les valeurs)</button>
+    </div>
+    <p class="hist-hint">Complète le bouton « Copier pour vérification Boursorama » présent sur chaque fiche (qui ne concerne qu'une seule valeur) : celui-ci rassemble en un seul texte les consignes de contrôle pour TOUTES vos valeurs suivies, à coller en une fois dans votre conversation avec Claude plutôt que de le faire fiche par fiche.</p>
+    <div id="globalVerifResult" class="hist-hint" style="margin-top:-6px;"></div>
+    <textarea id="globalVerifFallback" class="hist-paste" style="display:none; margin-top:6px; min-height:120px;" readonly></textarea>
+  </div>
+
   <div class="addrow">
     <input id="tickerInput" placeholder="Ex : AAPL (US) ou MC.PA (Euronext Paris)" maxlength="12">
     <button id="addBtn">Ajouter</button>
@@ -276,7 +286,7 @@ function analysteBox(ticker, devise){
   return `<div class="hist-block">
     <div class="hist-source">
       <span style="min-width:190px;">Objectif de cours (3 mois) :</span>
-      <input type="number" step="0.01" class="objectifManuelInput" data-ticker="${ticker}" placeholder="ex. 18.50" value="${objManuel!==undefined && objManuel!==null ? objManuel : ''}">
+      <input type="number" step="0.0001" class="objectifManuelInput" data-ticker="${ticker}" placeholder="ex. 18.50" value="${objManuel!==undefined && objManuel!==null ? objManuel : ''}">
       <span style="font-size:.72rem; color:var(--ink-muted);">${devise}</span>
       <input type="date" class="objectifManuelDateInput" data-ticker="${ticker}" value="${objDate || ''}" title="Date de l'objectif telle qu'affichée sur la fiche source (ex. Boursorama)">
     </div>
@@ -401,7 +411,7 @@ function autresObjectifsHtml(ticker, devise){
       ? (isUrl ? `<a href="${o.source}" target="_blank" rel="noopener">source ↗</a>` : `<span style="color:var(--ink-muted);">${o.source}</span>`)
       : '<span style="color:var(--ink-muted);">(source non précisée)</span>';
     return `<div class="hist-source">
-      <span><b>${fmt(o.value)} ${devise}</b></span>
+      <span><b>${fmtPrix(o.value)} ${devise}</b></span>
       ${srcHtml}
       <span style="font-size:.72rem; color:var(--ink-muted);">saisi le ${frDate(o.date)}</span>
       <button class="hist-reset" data-action="remove-objectif-analyste" data-ticker="${ticker}" data-index="${i}" style="margin:0;">retirer</button>
@@ -411,14 +421,14 @@ function autresObjectifsHtml(ticker, devise){
   if(list.length >= 2){
     const vals = list.map(o => o.value);
     const min = Math.min(...vals), max = Math.max(...vals), avg = vals.reduce((a,b)=>a+b,0) / vals.length;
-    summary = `<div class="hist-hint">Fourchette des objectifs saisis : ${fmt(min)} – ${fmt(max)} ${devise} (moyenne ${fmt(avg)} ${devise})</div>`;
+    summary = `<div class="hist-hint">Fourchette des objectifs saisis : ${fmtPrix(min)} – ${fmtPrix(max)} ${devise} (moyenne ${fmtPrix(avg)} ${devise})</div>`;
   }
   return `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
     <div style="font-size:.8rem; color:var(--ink-2); margin-bottom:4px;">Autres objectifs (analystes tiers, en complément de celui ci-dessus) :</div>
     ${rows}
     ${summary}
     <div class="hist-source">
-      <input type="number" step="0.01" class="objectifAnalysteValueInput" data-ticker="${ticker}" placeholder="Objectif" style="max-width:110px;">
+      <input type="number" step="0.0001" class="objectifAnalysteValueInput" data-ticker="${ticker}" placeholder="Objectif" style="max-width:110px;">
       <input type="text" class="objectifAnalysteSourceInput" data-ticker="${ticker}" placeholder="Source (nom, texte ou URL)">
       <button data-action="add-objectif-analyste" data-ticker="${ticker}">Ajouter</button>
     </div>
@@ -848,8 +858,8 @@ function renderSeedPreview(ticker){
     return `<tr>
       <td>${p.label}</td>
       <td class="${cls}">${v.var_pct !== undefined ? (v.var_pct>0?'+':'')+fmt(v.var_pct,2)+'%' : '—'}</td>
-      <td>${v.haut !== undefined ? fmt(v.haut) : '—'}</td>
-      <td>${v.bas !== undefined ? fmt(v.bas) : '—'}</td>
+      <td>${v.haut !== undefined ? fmtPrix(v.haut) : '—'}</td>
+      <td>${v.bas !== undefined ? fmtPrix(v.bas) : '—'}</td>
     </tr>`;
   }).join('');
   el.innerHTML = rows
@@ -972,11 +982,11 @@ function dailyUpdateRows(){
     return `<tr data-ticker="${t}">
       <td>${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.72rem;">${t}</span></td>
       <td><input type="text" class="dailyPasteInput" data-ticker="${t}" placeholder="Coller la ligne ici" style="width:170px; font-family:monospace; font-size:.74rem;"></td>
-      <td><input type="number" step="0.001" class="dailyDernierInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.0001" class="dailyDernierInput" data-ticker="${t}" style="width:80px;"></td>
       <td><input type="number" step="0.01" class="dailyVarInput" data-ticker="${t}" style="width:64px;"></td>
-      <td><input type="number" step="0.001" class="dailyOuvInput" data-ticker="${t}" style="width:80px;"></td>
-      <td><input type="number" step="0.001" class="dailyHautInput" data-ticker="${t}" style="width:80px;"></td>
-      <td><input type="number" step="0.001" class="dailyBasInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.0001" class="dailyOuvInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.0001" class="dailyHautInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.0001" class="dailyBasInput" data-ticker="${t}" style="width:80px;"></td>
       <td><input type="number" step="0.01" class="dailyYtdInput" data-ticker="${t}" style="width:70px;"></td>
       <td><input type="number" step="1" min="0" class="dailyVolInput" data-ticker="${t}" style="width:80px;" title="Volume converti en milliers (K)"></td>
     </tr>`;
@@ -1045,10 +1055,10 @@ function historiqueBox(ticker, currentClose){
 
   const seanceFields = `
       <span>Séance du</span> <input type="date" class="histSeanceDate" data-ticker="${ticker}" value="${todayStr}">
-      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="ouv" placeholder="Ouverture">
-      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="haut" placeholder="Plus haut">
-      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="bas" placeholder="Plus bas">
-      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="clo" placeholder="Clôture">
+      <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="ouv" placeholder="Ouverture">
+      <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="haut" placeholder="Plus haut">
+      <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="bas" placeholder="Plus bas">
+      <input type="number" step="0.0001" class="histSeanceInput" data-ticker="${ticker}" data-field="clo" placeholder="Clôture">
       <input type="number" step="1" min="0" class="histSeanceInput" data-ticker="${ticker}" data-field="volume" placeholder="Volume (K)">`;
 
   if(!entry || !entry.seed){
@@ -1057,8 +1067,8 @@ function historiqueBox(ticker, currentClose){
       <tr>
         <td>${p.label}</td>
         <td><input type="number" step="0.01" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="var_pct" placeholder="%"></td>
-        <td><input type="number" step="0.01" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="haut" placeholder="+ haut"></td>
-        <td><input type="number" step="0.01" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="bas" placeholder="+ bas"></td>
+        <td><input type="number" step="0.0001" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="haut" placeholder="+ haut"></td>
+        <td><input type="number" step="0.0001" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="bas" placeholder="+ bas"></td>
       </tr>`).join('');
     return `<div class="hist-block">
       ${sourceRow}
@@ -1084,10 +1094,10 @@ function historiqueBox(ticker, currentClose){
   const todaySeance = (entry.seances || []).find(s => s.date === todayStr);
   const already = !!todaySeance;
   const seanceSummary = todaySeance ? [
-      `O ${fmt(todaySeance.ouv)}`,
-      `H ${fmt(todaySeance.haut)}`,
-      `B ${fmt(todaySeance.bas)}`,
-      `C ${fmt(todaySeance.clo)}`,
+      `O ${fmtPrix(todaySeance.ouv)}`,
+      `H ${fmtPrix(todaySeance.haut)}`,
+      `B ${fmtPrix(todaySeance.bas)}`,
+      `C ${fmtPrix(todaySeance.clo)}`,
       todaySeance.var_pct !== undefined
         ? `Var. <span style="color:${todaySeance.var_pct>0?'var(--good)':(todaySeance.var_pct<0?'var(--bad)':'var(--warn)')}">${todaySeance.var_pct>0?'+':''}${fmt(todaySeance.var_pct,2)}%</span>`
         : null,
@@ -1097,8 +1107,8 @@ function historiqueBox(ticker, currentClose){
     <tr>
       <td>${v.label}</td>
       <td class="${v.var_pct>0?'up':(v.var_pct<0?'down':'')}">${v.var_pct>0?'+':''}${fmt(v.var_pct,2)}%</td>
-      <td>${fmt(v.haut)}</td>
-      <td>${fmt(v.bas)}</td>
+      <td>${fmtPrix(v.haut)}</td>
+      <td>${fmtPrix(v.bas)}</td>
       <td title="${v.computed ? 'Calculé à partir de vos séances saisies' : 'Encore basé sur votre saisie initiale du '+entry.seed.date+' (pas assez de séances saisies pour ce recul)'}">${v.computed ? '📈' : '🗓️'}</td>
     </tr>`).join('');
   return `<div class="hist-block">
@@ -1145,6 +1155,23 @@ async function checkHealth(){
 }
 
 function fmt(n, d=2){ return (n===null||n===undefined) ? '—' : Number(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+// Affichage d'un cours (ou de tout autre "prix") avec la précision réellement
+// nécessaire : 2 décimales par défaut (convention habituelle), mais jusqu'à 4
+// si la valeur en a besoin pour être représentée exactement (ex. 2,355 pour
+// Ekinops, ou 0,3455 pour une valeur à très faible cours) — jamais de
+// décimales superflues (15 s'affiche "15,00", pas "15,0000"). La saisie
+// elle-même n'a jamais été limitée à 2 décimales (Number(input.value)
+// conserve toute la précision tapée) : seul l'AFFICHAGE utilisait jusqu'ici
+// fmt() par défaut, qui tronque à 2 décimales.
+function fmtPrix(n){
+  if(n===null || n===undefined || isNaN(n)) return '—';
+  const num = Number(n);
+  let decimals = 4;
+  for(let d=2; d<=3; d++){
+    if(Math.abs(num - Number(num.toFixed(d))) < 1e-9){ decimals = d; break; }
+  }
+  return num.toLocaleString('fr-FR',{minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+}
 function currencySymbol(devise){ return devise==='EUR' ? '€' : (devise==='USD' ? '$' : (devise||'')); }
 
 function cardSkeleton(ticker){
@@ -1176,11 +1203,11 @@ function cardContent(ticker, d, alertMsgs){
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
     const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
     const priceLine = cours !== null
-      ? `<div class="price">${fmt(cours)} ${deviseGuess} ${variationBadge(dailyVarPct0)}</div>
+      ? `<div class="price">${fmtPrix(cours)} ${deviseGuess} ${variationBadge(dailyVarPct0)}</div>
          <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>`
       : '';
     const objectifLine = hasObjManuel
-      ? `<div class="kv"><span>Objectif 3 mois (saisi${objDate0 ? ' au ' + frDate(objDate0) : ''}) : <b>${fmt(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
+      ? `<div class="kv"><span>Objectif 3 mois (saisi${objDate0 ? ' au ' + frDate(objDate0) : ''}) : <b>${fmtPrix(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
       : '';
     return `<div class="card" data-ticker="${ticker}">
       <div class="head"><div>
@@ -1271,7 +1298,7 @@ function cardContent(ticker, d, alertMsgs){
     const note = positionNote(pnlPct, d.conseil);
     positionBox = `<div class="position">
       <div class="row">
-        Ma position — prix de revient : <input type="number" step="0.01" min="0" class="costBasisInput" data-ticker="${ticker}" value="${costBasis}">
+        Ma position — prix de revient : <input type="number" step="0.0001" min="0" class="costBasisInput" data-ticker="${ticker}" value="${costBasis}">
         ${devise}
         <button class="clear" data-ticker="${ticker}" data-action="clear-cost">retirer</button>
       </div>
@@ -1283,7 +1310,7 @@ function cardContent(ticker, d, alertMsgs){
   } else {
     positionBox = `<div class="position">
       <div class="row">
-        Vous détenez cette valeur ? Prix de revient : <input type="number" step="0.01" min="0" class="costBasisInput" data-ticker="${ticker}" placeholder="ex. 145.30">
+        Vous détenez cette valeur ? Prix de revient : <input type="number" step="0.0001" min="0" class="costBasisInput" data-ticker="${ticker}" placeholder="ex. 145.30">
         ${devise}
       </div>
     </div>`;
@@ -1298,11 +1325,11 @@ function cardContent(ticker, d, alertMsgs){
       </div>
     </div>
     <span class="badge ${d.conseil}">${d.conseil}</span>
-    <div class="price">${fmt(cours)} ${devise} ${variationBadge(dailyVarPct)}</div>
+    <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
-      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
+      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
     ${analysteBox(ticker, devise)}
     ${peaBox(ticker, d.eligibilite_pea)}
@@ -1432,16 +1459,16 @@ function buildTickerVerificationText(ticker){
   lines.push('');
   lines.push(`- Nom affiché : ${nom || '(aucun)'}${nomManuel ? ' [saisi manuellement]' : ' [deviné automatiquement]'}`);
   lines.push(`- Dernière séance saisie : ${manualSeance
-    ? `${manualSeance.date} — O ${fmt(manualSeance.ouv)} / +H ${fmt(manualSeance.haut)} / +B ${fmt(manualSeance.bas)} / C ${fmt(manualSeance.clo)}${manualSeance.volume!==undefined ? ' / Vol. ' + fmt(manualSeance.volume,0) + 'K' : ''}`
+    ? `${manualSeance.date} — O ${fmtPrix(manualSeance.ouv)} / +H ${fmtPrix(manualSeance.haut)} / +B ${fmtPrix(manualSeance.bas)} / C ${fmtPrix(manualSeance.clo)}${manualSeance.volume!==undefined ? ' / Vol. ' + fmt(manualSeance.volume,0) + 'K' : ''}`
     : '(aucune séance saisie)'}`);
   if(dernieresSeances.length > 1){
-    lines.push('- 5 dernières séances saisies : ' + dernieresSeances.map(s => `${s.date} : C ${fmt(s.clo)}`).join(' ; '));
+    lines.push('- 5 dernières séances saisies : ' + dernieresSeances.map(s => `${s.date} : C ${fmtPrix(s.clo)}`).join(' ; '));
   }
   lines.push(`- Éligibilité PEA : ${peaManuel ? 'confirmée par vous (Oui)' : `estimation automatique (${pea && pea.estime===true ? 'Oui' : (pea && pea.estime===false ? 'Non' : 'Indéterminé')})`}`);
-  lines.push(`- Objectif de cours (3 mois) : ${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu) + ' ' + devise : '(aucun)'}${hasObjManuel ? ' [saisi manuellement' + (objDate ? ', au ' + objDate : '') + ']' : ' [estimation automatique]'}`);
+  lines.push(`- Objectif de cours (3 mois) : ${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu) + ' ' + devise : '(aucun)'}${hasObjManuel ? ' [saisi manuellement' + (objDate ? ', au ' + objDate : '') + ']' : ' [estimation automatique]'}`);
   if(consManuel !== undefined && consManuel !== null) lines.push(`- Consensus analystes (Boursorama) : ${fmt(consManuel,2)}/5${consDate ? ' (au ' + consDate + ')' : ''}`);
   if(autresObjectifs.length){
-    lines.push('- Autres objectifs saisis : ' + autresObjectifs.map(o => `${fmt(o.value)} ${devise} (source : ${o.source || 'n/a'})`).join(' ; '));
+    lines.push('- Autres objectifs saisis : ' + autresObjectifs.map(o => `${fmtPrix(o.value)} ${devise} (source : ${o.source || 'n/a'})`).join(' ; '));
   }
   if(histEntry && histEntry.seed){
     const periodesTxt = HIST_PERIODS.map(p => {
@@ -1460,6 +1487,29 @@ function buildTickerVerificationText(ticker){
   if(exceptionnels.length){
     lines.push('- Dividendes exceptionnels : ' + exceptionnels.map(e => `${fmt(e.montant)} ${devise} le ${frDate(e.date)}`).join(' ; '));
   }
+  return lines.join('\n');
+}
+
+// Version groupée du texte de vérification ci-dessus : reprend, pour
+// CHAQUE valeur suivie, exactement le même contenu que buildTickerVerificationText
+// (une seule fonction, pas de duplication de la logique de comparaison),
+// simplement mis bout à bout avec un séparateur et une numérotation, précédé
+// d'une consigne globale. Complète le bouton par fiche (une seule valeur) :
+// pratique pour une vérification groupée en une seule conversation plutôt
+// que fiche par fiche.
+function buildGlobalVerificationText(){
+  if(!state.tickers.length){
+    return "Aucune valeur suivie pour le moment — rien à vérifier.";
+  }
+  const lines = [];
+  lines.push(`Vérification demandée pour l'ensemble de mes ${state.tickers.length} valeur(s) suivies (widget Conseil d'investissement).`);
+  lines.push("Pour chacune ci-dessous, merci d'ouvrir la fiche de référence indiquée et de comparer chaque donnée avec ce qui est saisi, en me signalant tout écart (regroupez vos remarques par valeur).");
+  lines.push('');
+  state.tickers.forEach((t, i) => {
+    lines.push(`────────── ${i + 1}/${state.tickers.length} ──────────`);
+    lines.push(buildTickerVerificationText(t));
+    lines.push('');
+  });
   return lines.join('\n');
 }
 
@@ -1498,14 +1548,14 @@ function buildPortfolioContext(question){
     const potentielPct = (objectifRetenu !== null && objectifRetenu !== undefined && cours) ? ((objectifRetenu - cours) / cours) * 100 : null;
     const tier = consensusTier(consManuel);
     const parts = [`${t}${nom ? ' (' + nom + ')' : ''} :`];
-    parts.push(cours !== null && cours !== undefined ? `cours ${fmt(cours)} ${deviseTxt}` : 'cours indisponible (backend en échec, non renseigné)');
+    parts.push(cours !== null && cours !== undefined ? `cours ${fmtPrix(cours)} ${deviseTxt}` : 'cours indisponible (backend en échec, non renseigné)');
     if(raw && raw.conseil) parts.push(`conseil interne du widget : ${raw.conseil}`);
     if(raw && raw.niveau_risque !== undefined) parts.push(`risque ${raw.niveau_risque}/10`);
     if(objectifRetenu !== null && objectifRetenu !== undefined){
-      parts.push(`objectif 3 mois : ${fmt(objectifRetenu)} ${deviseTxt}${potentielPct !== null ? ` (${potentielPct > 0 ? '+' : ''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' [saisi' + (objDate ? ' au ' + frDate(objDate) : '') + ']' : ' [estimation]'}`);
+      parts.push(`objectif 3 mois : ${fmtPrix(objectifRetenu)} ${deviseTxt}${potentielPct !== null ? ` (${potentielPct > 0 ? '+' : ''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' [saisi' + (objDate ? ' au ' + frDate(objDate) : '') + ']' : ' [estimation]'}`);
     }
     if(tier) parts.push(`consensus analystes : ${fmt(consManuel, 2)}/5 (${tier.label}, échelle 1 Acheter → 5 Vendre)${consDate ? ' au ' + frDate(consDate) : ''}`);
-    if(costBasis !== undefined && costBasis !== null) parts.push(`ma position : prix de revient ${fmt(costBasis)} ${deviseTxt}`);
+    if(costBasis !== undefined && costBasis !== null) parts.push(`ma position : prix de revient ${fmtPrix(costBasis)} ${deviseTxt}`);
     lines.push('- ' + parts.join(' — '));
   });
   lines.push('');
@@ -1521,6 +1571,23 @@ document.getElementById('askCopyBtn').addEventListener('click', async () => {
   try{
     await navigator.clipboard.writeText(text);
     resultEl.textContent = '✅ Contexte + question copiés — collez-les (Ctrl/Cmd+V) dans votre conversation avec Claude.';
+    fallback.style.display = 'none';
+  }catch(e){
+    resultEl.textContent = '⚠️ Copie automatique indisponible sur cet appareil — sélectionnez le texte ci-dessous (déjà sélectionné) et copiez-le à la main.';
+    fallback.style.display = 'block';
+    fallback.value = text;
+    fallback.focus();
+    fallback.select();
+  }
+});
+
+document.getElementById('globalVerifCopyBtn').addEventListener('click', async () => {
+  const text = buildGlobalVerificationText();
+  const resultEl = document.getElementById('globalVerifResult');
+  const fallback = document.getElementById('globalVerifFallback');
+  try{
+    await navigator.clipboard.writeText(text);
+    resultEl.textContent = `✅ Consignes de vérification copiées pour vos ${state.tickers.length} valeur(s) suivie(s) — collez-les (Ctrl/Cmd+V) dans votre conversation avec Claude.`;
     fallback.style.display = 'none';
   }catch(e){
     resultEl.textContent = '⚠️ Copie automatique indisponible sur cet appareil — sélectionnez le texte ci-dessous (déjà sélectionné) et copiez-le à la main.';
