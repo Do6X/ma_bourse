@@ -35,8 +35,12 @@
   .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px;}
   .card{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; position:relative;}
   .card .head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
-  .card .tk{font-weight:700; font-size:1.1rem;}
-  .card .nom{font-size:.78rem; color:var(--ink-muted);}
+  /* Nom de la société mis en avant (gros, en gras) ; le code/ticker en
+     dessous, en plus petit — l'inverse de l'ancien affichage, pour que la
+     fiche se lise d'abord par le nom de la valeur, plus parlant que son code
+     technique. */
+  .card .title{font-weight:700; font-size:1.08rem; line-height:1.25;}
+  .card .subtitle{font-size:.76rem; color:var(--ink-muted); margin-top:1px;}
   .badge{font-size:.7rem; font-weight:700; text-transform:uppercase; padding:4px 9px; border-radius:999px;}
   .badge.Acheter{background:var(--good-soft); color:var(--good);}
   .badge.Conserver{background:var(--warn-soft); color:var(--warn);}
@@ -92,6 +96,17 @@
     <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil.</div>
   </div>
 
+  <div class="config" style="margin-bottom:18px;">
+    <label for="askQuestion" style="display:block; margin-bottom:6px; font-weight:600;">Poser une question à Claude (sur une valeur suivie ou d'ordre général)</label>
+    <textarea id="askQuestion" class="hist-paste" placeholder="Ex : Que penses-tu d'Alstom en ce moment ? — ou — J'ai 1000 € à investir, sur laquelle de mes valeurs suivies me conseilles-tu de me positionner et à quel cours ?"></textarea>
+    <div class="hist-paste-row" style="margin-top:0;">
+      <button id="askCopyBtn" type="button">📋 Copier le contexte du portefeuille + la question</button>
+    </div>
+    <p class="hist-hint">Ce widget ne peut pas interroger une IA lui-même (pas de backend prévu pour ça) : ce bouton copie un résumé de toutes vos valeurs suivies (cours, objectif, consensus, position) suivi de votre question, prêt à coller dans une conversation avec Claude.</p>
+    <div id="askCopyResult" class="hist-hint" style="margin-top:-6px;"></div>
+    <textarea id="askCopyFallback" class="hist-paste" style="display:none; margin-top:6px; min-height:120px;" readonly></textarea>
+  </div>
+
   <div class="addrow">
     <input id="tickerInput" placeholder="Ex : AAPL (US) ou MC.PA (Euronext Paris)" maxlength="12">
     <button id="addBtn">Ajouter</button>
@@ -145,6 +160,83 @@ function saveCostBasis(ticker, value){
   if(value===null || value===undefined || isNaN(value)) delete store[ticker];
   else store[ticker] = value;
   try{ localStorage.setItem('stockAdvice.prixRevient', JSON.stringify(store)); }catch(e){}
+}
+
+// Objectif de cours à 3 mois et consensus des analystes : comme le prix de
+// revient ci-dessus, ce sont des données que VOUS saisissez (ex. depuis la
+// fiche Boursorama de la valeur) — jamais envoyées au backend. Une fois
+// saisi, l'objectif remplace systématiquement l'estimation automatique du
+// backend (objectif_3_mois), et le potentiel (%) affiché est alors recalculé
+// ici à partir du cours actuellement affiché (lui-même prioritairement votre
+// dernière séance saisie) : ainsi les deux chiffres restent toujours
+// cohérents entre eux, y compris quand le backend est en échec pour cette
+// valeur (voir analysteBox, utilisée aussi bien en cas de succès que d'échec
+// de l'API).
+function loadObjectifManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveObjectifManuel(ticker, value){
+  const store = loadObjectifManuel();
+  if(value===null || value===undefined || isNaN(value)) delete store[ticker];
+  else store[ticker] = value;
+  try{ localStorage.setItem('stockAdvice.objectifManuel', JSON.stringify(store)); }catch(e){}
+}
+function loadConsensusManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.consensusManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveConsensusManuel(ticker, value){
+  const store = loadConsensusManuel();
+  if(value===null || value===undefined || isNaN(value)) delete store[ticker];
+  else store[ticker] = value;
+  try{ localStorage.setItem('stockAdvice.consensusManuel', JSON.stringify(store)); }catch(e){}
+}
+// Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
+// avis) : 1 Acheter, 2 Renforcer, 3 Conserver, 4 Alléger, 5 Vendre. Les
+// paliers .5 servent de frontière entre deux libellés (ex. 1.63 -> Renforcer).
+// C'est notre propre lecture de la note, pas un libellé officiel Boursorama.
+function consensusTier(value){
+  if(value===null || value===undefined || isNaN(value)) return null;
+  const v = Number(value);
+  if(v <= 1.5) return {label:'Acheter', color:'var(--good)'};
+  if(v <= 2.5) return {label:'Renforcer', color:'var(--good)'};
+  if(v <= 3.5) return {label:'Conserver', color:'var(--warn)'};
+  if(v <= 4.5) return {label:'Alléger', color:'var(--bad)'};
+  return {label:'Vendre', color:'var(--bad)'};
+}
+// Devine la devise à partir du suffixe du ticker — utilisé uniquement en cas
+// d'échec du backend (ticker non reconnu par l'API, ex. Ekinops), quand la
+// devise réelle (d.devise) n'est pas disponible.
+function guessDevise(ticker){
+  const t = (ticker || '').toUpperCase();
+  if(t.endsWith('.PA')) return 'EUR';
+  if(t.endsWith('.L')) return 'GBP';
+  return 'USD';
+}
+
+// Bloc "objectif de cours / consensus analystes" saisis à la main — affiché
+// aussi bien quand la fiche s'est chargée normalement qu'en cas d'échec du
+// backend pour cette valeur (voir cardContent), pour que ces informations
+// restent saisissables même quand l'analyse automatique est indisponible.
+function analysteBox(ticker, devise){
+  const objManuel = loadObjectifManuel()[ticker];
+  const consManuel = loadConsensusManuel()[ticker];
+  const tier = consensusTier(consManuel);
+  const gauge = tier ? `<div style="display:flex; gap:2px; margin:4px 0 2px; max-width:170px;">
+      ${[1,2,3,4,5].map(n => `<div style="flex:1; height:6px; border-radius:3px; background:${Math.round(consManuel)===n ? tier.color : 'var(--surface-2)'};" title="${n}"></div>`).join('')}
+    </div>` : '';
+  return `<div class="hist-block">
+    <div class="hist-source">
+      <span style="min-width:190px;">Objectif de cours (3 mois) :</span>
+      <input type="number" step="0.01" class="objectifManuelInput" data-ticker="${ticker}" placeholder="ex. 18.50" value="${objManuel!==undefined && objManuel!==null ? objManuel : ''}">
+      <span style="font-size:.72rem; color:var(--ink-muted);">${devise} · à saisir depuis la fiche (ex. Boursorama)</span>
+    </div>
+    <div class="hist-source">
+      <span style="min-width:190px;">Consensus analystes :</span>
+      <input type="number" step="0.01" min="1" max="5" class="consensusManuelInput" data-ticker="${ticker}" placeholder="ex. 1.63" value="${consManuel!==undefined && consManuel!==null ? consManuel : ''}">
+      ${tier ? `<span style="font-size:.8rem;"><b style="color:${tier.color}">${tier.label}</b></span>` : ''}
+    </div>
+    ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle Boursorama (note moyenne) : 1 Acheter · 2 Renforcer · 3 Conserver · 4 Alléger · 5 Vendre</div>${gauge}` : ''}
+  </div>`;
 }
 
 // Historique de séances et tableau de variations (1er janvier, 1 semaine,
@@ -292,7 +384,13 @@ function computeVariations(ticker, currentClose){
       if(bas === undefined || bas === null || s.bas < bas) bas = s.bas;
     });
     let var_pct, computed;
-    if(earliest && earliest.date <= windowStartStr){
+    if(latestClose === null || latestClose === undefined){
+      // Aucune séance saisie et aucun cours de repli disponible (ex. fiche en
+      // échec côté backend, comme Ekinops, avant toute première séance) :
+      // impossible de recalculer la variation, on affiche seulement le seed.
+      var_pct = seed.var_pct;
+      computed = false;
+    } else if(earliest && earliest.date <= windowStartStr){
       const ref = inWindow[0] || earliest;
       var_pct = ((latestClose - ref.clo) / ref.clo) * 100;
       computed = true;
@@ -556,7 +654,7 @@ function currencySymbol(devise){ return devise==='EUR' ? '€' : (devise==='USD'
 
 function cardSkeleton(ticker){
   return `<div class="card" data-ticker="${ticker}">
-    <div class="head"><div><div class="tk">${ticker}</div><div class="nom">Chargement…</div></div>
+    <div class="head"><div><div class="title">${ticker}</div><div class="subtitle">Chargement…</div></div>
     <button class="remove" onclick="removeTicker('${ticker}')">✕</button></div>
     <div class="loading">Interrogation du backend…</div>
   </div>`;
@@ -564,16 +662,40 @@ function cardSkeleton(ticker){
 
 function cardContent(ticker, d, alertMsgs){
   if(d.error){
+    // Le backend n'a pas pu analyser cette valeur (ex. Ekinops : ticker trop
+    // peu suivi pour Yahoo/Stooq) — mais ça ne doit plus bloquer le suivi
+    // manuel : lien vers la fiche, cours/objectif/consensus saisis à la main
+    // et historique restent tous accessibles, exactement comme sur une fiche
+    // qui a chargé normalement. Le bouton « Réessayer » continue de retenter
+    // l'API en tâche de fond, sans effacer ce que vous avez saisi.
+    const deviseGuess = currencySymbol(guessDevise(ticker));
+    const manualSeance = getManualLatestSeance(ticker);
+    const cours = manualSeance ? manualSeance.clo : null;
+    const objManuel = loadObjectifManuel()[ticker];
+    const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
+    const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
+    const priceLine = cours !== null
+      ? `<div class="price">${fmt(cours)} ${deviseGuess}</div>
+         <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>`
+      : '';
+    const objectifLine = hasObjManuel
+      ? `<div class="kv"><span>Objectif 3 mois (saisi) : <b>${fmt(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${potentielPct>0?'+':''}${fmt(potentielPct)}%)` : ''}</span></div>`
+      : '';
     return `<div class="card" data-ticker="${ticker}">
-      <div class="head"><div class="tk">${ticker}</div>
+      <div class="head"><div class="title">${ticker}</div>
         <div style="display:flex; gap:6px; align-items:center;">
           <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
           <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
         </div>
       </div>
+      ${priceLine}
+      ${objectifLine}
       <div class="error">${d.error.message || 'Erreur inconnue.'}
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
+      <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : lien vers la fiche, séances, objectif de cours et consensus.</p>
+      ${analysteBox(ticker, deviseGuess)}
+      ${historiqueBox(ticker, cours)}
     </div>`;
   }
   const justif = `Score global ${fmt(d.scoring.global,1)}/10 (technique ${fmt(d.scoring.technique,1)}, `+
@@ -583,8 +705,6 @@ function cardContent(ticker, d, alertMsgs){
     ? alertMsgs.map(a=>`<div class="alertbox">${a.message}</div>`).join('')
     : '';
   const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
-  const objectifNonFiable = (d.objectif_3_mois && d.objectif_3_mois.fiable === false)
-    ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">${d.objectif_3_mois.avertissement}</div>` : '';
   const devise = currencySymbol(d.devise);
   const pea = d.eligibilite_pea || {};
   const peaLabel = pea.estime===true ? 'Oui' : (pea.estime===false ? 'Non' : 'Indéterminé');
@@ -601,6 +721,19 @@ function cardContent(ticker, d, alertMsgs){
   // vous avez vous-même vérifiée qui fait foi, pas l'estimation automatique.
   const manualSeance = getManualLatestSeance(ticker);
   const cours = manualSeance ? manualSeance.clo : d.seance.close;
+  // Objectif de cours 3 mois : votre saisie manuelle (ex. copiée depuis
+  // Boursorama) prend systématiquement le pas sur l'estimation du backend,
+  // et le potentiel (%) est toujours recalculé ICI par rapport au cours
+  // actuellement affiché ci-dessus (jamais réutilisé tel quel depuis l'API,
+  // qui l'aurait calculé par rapport à SA PROPRE clôture, potentiellement
+  // différente de votre séance saisie).
+  const objManuel = loadObjectifManuel()[ticker];
+  const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
+  const objectifRetenu = hasObjManuel ? objManuel : (d.objectif_3_mois ? d.objectif_3_mois.retenu : null);
+  const potentielPct = (objectifRetenu !== null && objectifRetenu !== undefined && cours)
+    ? ((objectifRetenu - cours) / cours) * 100 : null;
+  const objectifNonFiable = (!hasObjManuel && d.objectif_3_mois && d.objectif_3_mois.fiable === false)
+    ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">${d.objectif_3_mois.avertissement}</div>` : '';
   const priceDateIso = manualSeance ? manualSeance.date : (d.seance.date || null);
   let priceFreshnessNote;
   if(manualSeance){
@@ -641,7 +774,7 @@ function cardContent(ticker, d, alertMsgs){
   }
   return `<div class="card" data-ticker="${ticker}">
     <div class="head">
-      <div><div class="tk">${ticker}</div><div class="nom">${d.nom||''}</div></div>
+      <div><div class="title">${d.nom || ticker}</div><div class="subtitle">${ticker}</div></div>
       <div style="display:flex; gap:6px; align-items:center;">
         <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
         <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
@@ -652,8 +785,9 @@ function cardContent(ticker, d, alertMsgs){
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
-      <span>Objectif 3 mois : <b>${fmt(d.objectif_3_mois.retenu)} ${devise}</b> (${d.objectif_3_mois.potentiel_rendement_pct>0?'+':''}${fmt(d.objectif_3_mois.potentiel_rendement_pct)}%)${d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : ''}</span>
+      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${potentielPct>0?'+':''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
+    ${analysteBox(ticker, devise)}
     ${peaBox}
     ${positionBox}
     <div class="justif">${justif}</div>
@@ -730,6 +864,64 @@ document.getElementById('addBtn').addEventListener('click', () => {
 document.getElementById('tickerInput').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('addBtn').click(); });
 document.getElementById('apiBase').addEventListener('change', () => { persistApiBase(); checkHealth(); });
 document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+
+// Construit un résumé texte de toutes les valeurs suivies (cours, conseil
+// interne, objectif 3 mois, consensus, position), suivi de la question
+// tapée — pensé pour être collé tel quel dans une conversation avec Claude.
+// Rien n'est envoyé automatiquement nulle part : c'est un copier-coller
+// volontaire, à l'initiative de l'utilisateur (voir hist-hint associé).
+function buildPortfolioContext(question){
+  const lines = ["Contexte de mon portefeuille suivi (widget Conseil d'investissement) :", ''];
+  if(!state.tickers.length){
+    lines.push('(aucune valeur suivie pour le moment)');
+  }
+  state.tickers.forEach(t => {
+    const entry = state.data[t];
+    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+    const manualSeance = getManualLatestSeance(t);
+    const objManuel = loadObjectifManuel()[t];
+    const consManuel = loadConsensusManuel()[t];
+    const costBasis = loadCostBasis()[t];
+    const nom = raw && raw.nom ? raw.nom : '';
+    const deviseTxt = raw && raw.devise ? raw.devise : guessDevise(t);
+    const cours = manualSeance ? manualSeance.clo : (raw && raw.seance ? raw.seance.close : null);
+    const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
+    const objectifRetenu = hasObjManuel ? objManuel : (raw && raw.objectif_3_mois ? raw.objectif_3_mois.retenu : null);
+    const potentielPct = (objectifRetenu !== null && objectifRetenu !== undefined && cours) ? ((objectifRetenu - cours) / cours) * 100 : null;
+    const tier = consensusTier(consManuel);
+    const parts = [`${t}${nom ? ' (' + nom + ')' : ''} :`];
+    parts.push(cours !== null && cours !== undefined ? `cours ${fmt(cours)} ${deviseTxt}` : 'cours indisponible (backend en échec, non renseigné)');
+    if(raw && raw.conseil) parts.push(`conseil interne du widget : ${raw.conseil}`);
+    if(raw && raw.niveau_risque !== undefined) parts.push(`risque ${raw.niveau_risque}/10`);
+    if(objectifRetenu !== null && objectifRetenu !== undefined){
+      parts.push(`objectif 3 mois : ${fmt(objectifRetenu)} ${deviseTxt}${potentielPct !== null ? ` (${potentielPct > 0 ? '+' : ''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' [saisi]' : ' [estimation]'}`);
+    }
+    if(tier) parts.push(`consensus analystes : ${fmt(consManuel, 2)}/5 (${tier.label}, échelle 1 Acheter → 5 Vendre)`);
+    if(costBasis !== undefined && costBasis !== null) parts.push(`ma position : prix de revient ${fmt(costBasis)} ${deviseTxt}`);
+    lines.push('- ' + parts.join(' — '));
+  });
+  lines.push('');
+  lines.push('Ma question : ' + (question || '(à préciser)'));
+  return lines.join('\n');
+}
+
+document.getElementById('askCopyBtn').addEventListener('click', async () => {
+  const question = document.getElementById('askQuestion').value.trim();
+  const text = buildPortfolioContext(question);
+  const resultEl = document.getElementById('askCopyResult');
+  const fallback = document.getElementById('askCopyFallback');
+  try{
+    await navigator.clipboard.writeText(text);
+    resultEl.textContent = '✅ Contexte + question copiés — collez-les (Ctrl/Cmd+V) dans votre conversation avec Claude.';
+    fallback.style.display = 'none';
+  }catch(e){
+    resultEl.textContent = '⚠️ Copie automatique indisponible sur cet appareil — sélectionnez le texte ci-dessous (déjà sélectionné) et copiez-le à la main.';
+    fallback.style.display = 'block';
+    fallback.value = text;
+    fallback.focus();
+    fallback.select();
+  }
+});
 
 document.getElementById('bulkAddToggle').addEventListener('click', () => {
   const panel = document.getElementById('bulkAddPanel');
@@ -833,6 +1025,23 @@ document.getElementById('grid').addEventListener('change', e => {
   const srcInput = e.target.closest('.histSourceInput');
   if(!srcInput) return;
   saveSourceUrl(srcInput.dataset.ticker, srcInput.value.trim());
+  render();
+});
+document.getElementById('grid').addEventListener('change', e => {
+  const objInput = e.target.closest('.objectifManuelInput');
+  if(objInput){
+    const value = objInput.value.trim() === '' ? null : Number(objInput.value);
+    saveObjectifManuel(objInput.dataset.ticker, value);
+    render();
+    return;
+  }
+  const consInput = e.target.closest('.consensusManuelInput');
+  if(consInput){
+    const value = consInput.value.trim() === '' ? null : Number(consInput.value);
+    saveConsensusManuel(consInput.dataset.ticker, value);
+    render();
+    return;
+  }
 });
 document.getElementById('grid').addEventListener('keydown', e => {
   const ta = e.target.closest('.hist-paste');
