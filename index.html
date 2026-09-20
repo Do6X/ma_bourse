@@ -565,7 +565,12 @@ function cardSkeleton(ticker){
 function cardContent(ticker, d, alertMsgs){
   if(d.error){
     return `<div class="card" data-ticker="${ticker}">
-      <div class="head"><div class="tk">${ticker}</div><button class="remove" onclick="removeTicker('${ticker}')">✕</button></div>
+      <div class="head"><div class="tk">${ticker}</div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
+          <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
+        </div>
+      </div>
       <div class="error">${d.error.message || 'Erreur inconnue.'}
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
@@ -637,7 +642,10 @@ function cardContent(ticker, d, alertMsgs){
   return `<div class="card" data-ticker="${ticker}">
     <div class="head">
       <div><div class="tk">${ticker}</div><div class="nom">${d.nom||''}</div></div>
-      <button class="remove" onclick="removeTicker('${ticker}')">✕</button>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
+        <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
+      </div>
     </div>
     <span class="badge ${d.conseil}">${d.conseil}</span>
     <div class="price">${fmt(cours)} ${devise}</div>
@@ -846,11 +854,13 @@ document.getElementById('grid').addEventListener('input', e => {
 loadPersisted();
 checkHealth();
 render();
+// Mise à jour une seule fois à l'ouverture de la page, puis plus aucun appel
+// automatique au backend : le widget ne se remet plus à jour tout seul en
+// arrière-plan (ce qui coupait la lecture des fiches toutes les 60 s).
+// La mise à jour redevient volontaire : bouton "↻" général (toutes les
+// valeurs) dans la barre d'ajout, ou bouton "↻" individuel sur chaque fiche
+// (une seule valeur, sans relancer un rafraîchissement général).
 state.tickers.forEach(loadTicker);
-// Rafraîchissement automatique toutes les 60 s tant que la page reste ouverte
-// (le backend met de toute façon en cache 5 min côté serveur — inutile
-// d'interroger plus souvent, voir README backend).
-setInterval(refreshAll, 60000);
 </script>
 </body>
 </html>
