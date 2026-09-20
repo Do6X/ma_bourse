@@ -662,7 +662,7 @@ def analyze_stock(ticker: str) -> dict:
         "date_analyse": datetime.now().isoformat(timespec="seconds"),
         "source_bascule_api": bascule,
         "eligibilite_pea": pea,
-        "seance": {"open": today["open"], "close": price, "high": today["high"], "low": today["low"],
+        "seance": {"date": today.get("date"), "open": today["open"], "close": price, "high": today["high"], "low": today["low"],
                    "tendance_jour": tj_label, "variation_jour_pct": round(tj_pct, 2),
                    "tendance_7_seances": t7["tendance"], "variation_7_seances_pct": round(t7["variation_pct"], 2)},
         "technique": {"rsi14": round(r14, 1) if r14 is not None else None, "macd": m,
