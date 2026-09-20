@@ -97,6 +97,31 @@
   </div>
 
   <div class="config" style="margin-bottom:18px;">
+    <button class="hist-toggle" id="dailyUpdateToggle" type="button">📋 Mise à jour quotidienne des cours (tableau groupé)</button>
+    <div id="dailyUpdatePanel" hidden style="margin-top:8px;">
+      <p class="hist-hint">Pour chaque valeur, collez directement dans la case « Coller ici » la ligne correspondante copiée depuis la cote générale Boursorama (colonnes Dernier, Var., Ouv., +Haut, +Bas, Var. depuis le 1er janvier, Volume, séparées par des tabulations) — les colonnes se remplissent automatiquement dès le collage (le « (c) » à côté du cours de clôture est retiré automatiquement), corrigez si besoin, puis cliquez sur « Enregistrer tout » en bas du tableau. La date retenue est celle d'aujourd'hui pour toutes les valeurs.</p>
+      <p class="hist-hint">Le « Var. » collé est indicatif : il est comparé à la variation recalculée automatiquement par le widget (à partir de votre dernière clôture enregistrée) et un écart notable est signalé après enregistrement, mais il ne remplace jamais ce calcul. Le volume est automatiquement converti en milliers.</p>
+      <div style="overflow-x:auto;">
+      <table class="hist-table" id="dailyUpdateTable">
+        <thead><tr>
+          <th>Valeur</th><th>Coller ici</th>
+          <th title="Cours de clôture">Dernier</th>
+          <th title="Variation en séance (indicatif, non enregistré tel quel)">Var.</th>
+          <th title="Cours d'ouverture">Ouv.</th>
+          <th title="Plus haut en séance">+Haut</th>
+          <th title="Plus bas en séance">+Bas</th>
+          <th title="Variation depuis le 1er janvier">Var/1Janv</th>
+          <th title="Volume échangé, converti automatiquement en milliers">Vol.</th>
+        </tr></thead>
+        <tbody id="dailyUpdateBody"></tbody>
+      </table>
+      </div>
+      <button id="dailyUpdateSaveBtn" type="button" style="margin-top:8px;">Enregistrer tout</button>
+      <div id="dailyUpdateResult" class="hist-hint" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <div class="config" style="margin-bottom:18px;">
     <label for="askQuestion" style="display:block; margin-bottom:6px; font-weight:600;">Poser une question à Claude (sur une valeur suivie ou d'ordre général)</label>
     <textarea id="askQuestion" class="hist-paste" placeholder="Ex : Que penses-tu d'Alstom en ce moment ? — ou — J'ai 1000 € à investir, sur laquelle de mes valeurs suivies me conseilles-tu de me positionner et à quel cours ?"></textarea>
     <div class="hist-paste-row" style="margin-top:0;">
@@ -190,6 +215,28 @@ function saveConsensusManuel(ticker, value){
   else store[ticker] = value;
   try{ localStorage.setItem('stockAdvice.consensusManuel', JSON.stringify(store)); }catch(e){}
 }
+// Date de l'objectif de cours et du consensus tels qu'affichés sur la fiche
+// source (ex. Boursorama affiche « CONSENSUS DES ANALYSTES AU 18/08/26 ») —
+// cette date n'est PAS forcément celle du jour de la saisie : c'est la date
+// à laquelle Boursorama indique avoir établi cette estimation, à recopier
+// telle quelle. Elle sert uniquement de repère de fraîcheur (affichage +
+// vérification), jamais recalculée ni requise pour enregistrer une valeur.
+function loadObjectifManuelDate(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuelDate') || '{}'); }catch(e){ return {}; }
+}
+function saveObjectifManuelDate(ticker, date){
+  const store = loadObjectifManuelDate();
+  if(!date) delete store[ticker]; else store[ticker] = date;
+  try{ localStorage.setItem('stockAdvice.objectifManuelDate', JSON.stringify(store)); }catch(e){}
+}
+function loadConsensusManuelDate(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.consensusManuelDate') || '{}'); }catch(e){ return {}; }
+}
+function saveConsensusManuelDate(ticker, date){
+  const store = loadConsensusManuelDate();
+  if(!date) delete store[ticker]; else store[ticker] = date;
+  try{ localStorage.setItem('stockAdvice.consensusManuelDate', JSON.stringify(store)); }catch(e){}
+}
 // Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
 // avis) : 1 Acheter, 2 Renforcer, 3 Conserver, 4 Alléger, 5 Vendre. Les
 // paliers .5 servent de frontière entre deux libellés (ex. 1.63 -> Renforcer).
@@ -219,7 +266,9 @@ function guessDevise(ticker){
 // restent saisissables même quand l'analyse automatique est indisponible.
 function analysteBox(ticker, devise){
   const objManuel = loadObjectifManuel()[ticker];
+  const objDate = loadObjectifManuelDate()[ticker];
   const consManuel = loadConsensusManuel()[ticker];
+  const consDate = loadConsensusManuelDate()[ticker];
   const tier = consensusTier(consManuel);
   const gauge = tier ? `<div style="display:flex; gap:2px; margin:4px 0 2px; max-width:170px;">
       ${[1,2,3,4,5].map(n => `<div style="flex:1; height:6px; border-radius:3px; background:${Math.round(consManuel)===n ? tier.color : 'var(--surface-2)'};" title="${n}"></div>`).join('')}
@@ -228,13 +277,16 @@ function analysteBox(ticker, devise){
     <div class="hist-source">
       <span style="min-width:190px;">Objectif de cours (3 mois) :</span>
       <input type="number" step="0.01" class="objectifManuelInput" data-ticker="${ticker}" placeholder="ex. 18.50" value="${objManuel!==undefined && objManuel!==null ? objManuel : ''}">
-      <span style="font-size:.72rem; color:var(--ink-muted);">${devise} · à saisir depuis la fiche (ex. Boursorama)</span>
+      <span style="font-size:.72rem; color:var(--ink-muted);">${devise}</span>
+      <input type="date" class="objectifManuelDateInput" data-ticker="${ticker}" value="${objDate || ''}" title="Date de l'objectif telle qu'affichée sur la fiche source (ex. Boursorama)">
     </div>
     <div class="hist-source">
       <span style="min-width:190px;">Consensus analystes :</span>
       <input type="number" step="0.01" min="1" max="5" class="consensusManuelInput" data-ticker="${ticker}" placeholder="ex. 1.63" value="${consManuel!==undefined && consManuel!==null ? consManuel : ''}">
       ${tier ? `<span style="font-size:.8rem;"><b style="color:${tier.color}">${tier.label}</b></span>` : ''}
+      <input type="date" class="consensusManuelDateInput" data-ticker="${ticker}" value="${consDate || ''}" title="Date du consensus telle qu'affichée sur la fiche source (ex. « au 18/08/26 » sur Boursorama)">
     </div>
+    ${(objDate || consDate) ? `<div class="hist-hint" style="margin:0 0 2px;">${objDate ? 'Objectif au ' + frDate(objDate) : ''}${(objDate && consDate) ? ' · ' : ''}${consDate ? 'Consensus au ' + frDate(consDate) : ''}</div>` : ''}
     ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle Boursorama (note moyenne) : 1 Acheter · 2 Renforcer · 3 Conserver · 4 Alléger · 5 Vendre</div>${gauge}` : ''}
     ${autresObjectifsHtml(ticker, devise)}
   </div>`;
@@ -843,6 +895,143 @@ function upsertSeance(ticker, seance){
   saveHistoriqueStore(store);
 }
 
+// Tableau de mise à jour quotidienne groupée (toutes les valeurs suivies en
+// une fois) : reprend directement, ligne par ligne, ce qui est copié depuis
+// la "cote générale" Boursorama (vue multi-valeurs), au format tabulé exact
+// Dernier / Var. / Ouv. / +Haut / +Bas / Var. depuis le 1er janvier / Volume
+// — ex. pour Alstom : "15,280 (c) \t-2,64%\t15,565\t15,610\t15,280\t-39,29% \t2063455".
+// Contrairement aux saisies historique/dividende (recherche de libellés
+// connus dans le texte), il n'y a ici aucun libellé : on extrait dans
+// l'ordre les 6 premiers nombres (Dernier/Var./Ouv./+Haut/+Bas/Var-1Janv),
+// puis tout ce qui suit est traité comme le volume (les espaces éventuels
+// utilisés comme séparateur de milliers sont retirés). Le marqueur "(c)"
+// (clôture) accolé au dernier cours est retiré avant extraction.
+function parseCoteGeneraleLine(text){
+  if(!text) return null;
+  const cleaned = text.replace(/\(c\)/gi, '');
+  const numRe = /[+-]?\d+(?:[.,]\d+)?\s*%?/g;
+  const tokens = [];
+  let m;
+  while(tokens.length < 6 && (m = numRe.exec(cleaned))){
+    tokens.push({ text: m[0], end: numRe.lastIndex });
+  }
+  if(tokens.length < 6) return null;
+  const num = s => parseFloat(s.replace('%','').replace(/[\s ]/g,'').replace(',','.'));
+  const [dernier, varJour, ouv, haut, bas, varYtd] = tokens.map(t => num(t.text));
+  if([dernier, ouv, haut, bas].some(isNaN)) return null;
+  const remainder = cleaned.slice(tokens[tokens.length-1].end);
+  const volDigits = (remainder.match(/\d/g) || []).join('');
+  const volBrut = volDigits ? parseInt(volDigits, 10) : NaN;
+  return { dernier, varJour, ouv, haut, bas, varYtd, volumeK: isNaN(volBrut) ? undefined : Math.round(volBrut/1000) };
+}
+
+function fillDailyRow(ticker, parsed){
+  if(!parsed) return;
+  const set = (cls, v) => {
+    const el = document.querySelector(`.${cls}[data-ticker="${ticker}"]`);
+    if(el && v !== undefined && !isNaN(v)) el.value = v;
+  };
+  set('dailyDernierInput', parsed.dernier);
+  set('dailyVarInput', parsed.varJour);
+  set('dailyOuvInput', parsed.ouv);
+  set('dailyHautInput', parsed.haut);
+  set('dailyBasInput', parsed.bas);
+  set('dailyYtdInput', parsed.varYtd);
+  set('dailyVolInput', parsed.volumeK);
+}
+
+function readDailyRow(ticker){
+  const get = cls => {
+    const el = document.querySelector(`.${cls}[data-ticker="${ticker}"]`);
+    return (el && el.value.trim() !== '') ? Number(el.value) : NaN;
+  };
+  return {
+    dernier: get('dailyDernierInput'),
+    varJour: get('dailyVarInput'),
+    ouv: get('dailyOuvInput'),
+    haut: get('dailyHautInput'),
+    bas: get('dailyBasInput'),
+    varYtd: get('dailyYtdInput'),
+    vol: get('dailyVolInput'),
+  };
+}
+
+// Une ligne par valeur suivie, avec sa propre case de collage — pas de
+// tableau à libellés comme pour l'historique/le dividende (une seule valeur
+// à la fois) puisqu'ici chaque VALEUR occupe sa propre ligne, remplie
+// indépendamment par simple collage (aucun bouton "analyser" nécessaire :
+// voir le listener sur l'événement 'input', plus bas).
+function dailyUpdateRows(){
+  if(!state.tickers.length){
+    return `<tr><td colspan="9" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
+  }
+  return state.tickers.map(t => {
+    const entry = state.data[t];
+    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+    const nom = loadNomManuel()[t] || (raw && raw.nom) || '';
+    return `<tr data-ticker="${t}">
+      <td>${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.72rem;">${t}</span></td>
+      <td><input type="text" class="dailyPasteInput" data-ticker="${t}" placeholder="Coller la ligne ici" style="width:170px; font-family:monospace; font-size:.74rem;"></td>
+      <td><input type="number" step="0.001" class="dailyDernierInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.01" class="dailyVarInput" data-ticker="${t}" style="width:64px;"></td>
+      <td><input type="number" step="0.001" class="dailyOuvInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.001" class="dailyHautInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.001" class="dailyBasInput" data-ticker="${t}" style="width:80px;"></td>
+      <td><input type="number" step="0.01" class="dailyYtdInput" data-ticker="${t}" style="width:70px;"></td>
+      <td><input type="number" step="1" min="0" class="dailyVolInput" data-ticker="${t}" style="width:80px;" title="Volume converti en milliers (K)"></td>
+    </tr>`;
+  }).join('');
+}
+function renderDailyUpdateTable(){
+  const body = document.getElementById('dailyUpdateBody');
+  if(body) body.innerHTML = dailyUpdateRows();
+}
+function refreshDailyUpdateTableIfOpen(){
+  const panel = document.getElementById('dailyUpdatePanel');
+  if(panel && !panel.hidden) renderDailyUpdateTable();
+}
+
+// Enregistre en une fois toutes les lignes complètes du tableau : une séance
+// du jour par valeur (comme le ferait la saisie individuelle de la fiche —
+// même upsertSeance, donc la variation % du cours reste toujours calculée
+// localement, jamais celle collée depuis Boursorama, qui n'est utilisée que
+// pour un contrôle de cohérence a posteriori), et met à jour la variation
+// "depuis le 1er janvier" du seed d'historique quand elle est renseignée.
+// Une ligne sans Dernier/Ouv./+Haut/+Bas complets est simplement ignorée
+// (valeur non encore collée ce jour-là).
+function saveDailyUpdates(){
+  const todayStr = isoDate(new Date());
+  const notes = [];
+  let count = 0;
+  state.tickers.forEach(t => {
+    const row = readDailyRow(t);
+    if([row.dernier, row.ouv, row.haut, row.bas].some(v => isNaN(v))) return;
+    const seance = { date: todayStr, ouv: row.ouv, haut: row.haut, bas: row.bas, clo: row.dernier };
+    if(!isNaN(row.vol)) seance.volume = row.vol;
+    upsertSeance(t, seance);
+    if(!isNaN(row.varYtd)){
+      const store = loadHistoriqueStore();
+      if(!store[t]) store[t] = { seed: null, seances: store[t] ? store[t].seances : [] };
+      if(!store[t].seed) store[t].seed = { date: todayStr, periods: {} };
+      if(!store[t].seed.periods) store[t].seed.periods = {};
+      if(!store[t].seed.periods.ytd) store[t].seed.periods.ytd = {};
+      store[t].seed.periods.ytd.var_pct = row.varYtd;
+      saveHistoriqueStore(store);
+    }
+    count++;
+    const savedEntry = loadHistoriqueStore()[t];
+    const savedSeance = savedEntry && (savedEntry.seances || []).find(s => s.date === todayStr);
+    let note = `${t} : enregistré`;
+    if(!isNaN(row.varJour) && savedSeance && savedSeance.var_pct !== undefined && savedSeance.var_pct !== null){
+      if(Math.abs(savedSeance.var_pct - row.varJour) > 0.5){
+        note += ` — ⚠ écart Var. Boursorama ${row.varJour>0?'+':''}${fmt(row.varJour,2)}% vs calculé ${savedSeance.var_pct>0?'+':''}${fmt(savedSeance.var_pct,2)}% (vérifiez la clôture précédente ou une séance manquante)`;
+      }
+    }
+    notes.push(note);
+  });
+  return { count, notes, todayStr };
+}
+
 function historiqueBox(ticker, currentClose){
   const store = loadHistoriqueStore();
   const entry = store[ticker];
@@ -983,6 +1172,7 @@ function cardContent(ticker, d, alertMsgs){
     const dailyVarPct0 = (manualSeance && manualSeance.date === todayStr0 && manualSeance.var_pct !== undefined)
       ? manualSeance.var_pct : null;
     const objManuel = loadObjectifManuel()[ticker];
+    const objDate0 = loadObjectifManuelDate()[ticker];
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
     const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
     const priceLine = cours !== null
@@ -990,7 +1180,7 @@ function cardContent(ticker, d, alertMsgs){
          <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>`
       : '';
     const objectifLine = hasObjManuel
-      ? `<div class="kv"><span>Objectif 3 mois (saisi) : <b>${fmt(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
+      ? `<div class="kv"><span>Objectif 3 mois (saisi${objDate0 ? ' au ' + frDate(objDate0) : ''}) : <b>${fmt(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
       : '';
     return `<div class="card" data-ticker="${ticker}">
       <div class="head"><div>
@@ -1053,6 +1243,7 @@ function cardContent(ticker, d, alertMsgs){
   // qui l'aurait calculé par rapport à SA PROPRE clôture, potentiellement
   // différente de votre séance saisie).
   const objManuel = loadObjectifManuel()[ticker];
+  const objDate = loadObjectifManuelDate()[ticker];
   const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
   const objectifRetenu = hasObjManuel ? objManuel : (d.objectif_3_mois ? d.objectif_3_mois.retenu : null);
   const potentielPct = (objectifRetenu !== null && objectifRetenu !== undefined && cours)
@@ -1111,7 +1302,7 @@ function cardContent(ticker, d, alertMsgs){
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
-      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
+      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
     ${analysteBox(ticker, devise)}
     ${peaBox(ticker, d.eligibilite_pea)}
@@ -1170,6 +1361,7 @@ function removeTicker(ticker){
   delete state.data[ticker];
   persistTickers();
   render();
+  refreshDailyUpdateTableIfOpen();
 }
 
 function refreshAll(){
@@ -1187,6 +1379,7 @@ document.getElementById('addBtn').addEventListener('click', () => {
   const guessedUrl = guessBoursoramaUrl(ticker);
   if(guessedUrl) saveSourceUrl(ticker, guessedUrl);
   render();
+  refreshDailyUpdateTableIfOpen();
   loadTicker(ticker);
 });
 document.getElementById('tickerInput').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('addBtn').click(); });
@@ -1219,9 +1412,11 @@ function buildTickerVerificationText(ticker){
   const peaManuel = loadPeaManuel()[ticker] === true;
   const pea = raw ? raw.eligibilite_pea : null;
   const objManuel = loadObjectifManuel()[ticker];
+  const objDate = loadObjectifManuelDate()[ticker];
   const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
   const objectifRetenu = hasObjManuel ? objManuel : (raw && raw.objectif_3_mois ? raw.objectif_3_mois.retenu : null);
   const consManuel = loadConsensusManuel()[ticker];
+  const consDate = loadConsensusManuelDate()[ticker];
   const autresObjectifs = loadObjectifsAnalystes()[ticker] || [];
   const dividendes = loadDividendes()[ticker];
   const exceptionnels = loadDividendesExceptionnels()[ticker] || [];
@@ -1243,8 +1438,8 @@ function buildTickerVerificationText(ticker){
     lines.push('- 5 dernières séances saisies : ' + dernieresSeances.map(s => `${s.date} : C ${fmt(s.clo)}`).join(' ; '));
   }
   lines.push(`- Éligibilité PEA : ${peaManuel ? 'confirmée par vous (Oui)' : `estimation automatique (${pea && pea.estime===true ? 'Oui' : (pea && pea.estime===false ? 'Non' : 'Indéterminé')})`}`);
-  lines.push(`- Objectif de cours (3 mois) : ${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu) + ' ' + devise : '(aucun)'}${hasObjManuel ? ' [saisi manuellement]' : ' [estimation automatique]'}`);
-  if(consManuel !== undefined && consManuel !== null) lines.push(`- Consensus analystes (Boursorama) : ${fmt(consManuel,2)}/5`);
+  lines.push(`- Objectif de cours (3 mois) : ${objectifRetenu!==null && objectifRetenu!==undefined ? fmt(objectifRetenu) + ' ' + devise : '(aucun)'}${hasObjManuel ? ' [saisi manuellement' + (objDate ? ', au ' + objDate : '') + ']' : ' [estimation automatique]'}`);
+  if(consManuel !== undefined && consManuel !== null) lines.push(`- Consensus analystes (Boursorama) : ${fmt(consManuel,2)}/5${consDate ? ' (au ' + consDate + ')' : ''}`);
   if(autresObjectifs.length){
     lines.push('- Autres objectifs saisis : ' + autresObjectifs.map(o => `${fmt(o.value)} ${devise} (source : ${o.source || 'n/a'})`).join(' ; '));
   }
@@ -1291,7 +1486,9 @@ function buildPortfolioContext(question){
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
     const manualSeance = getManualLatestSeance(t);
     const objManuel = loadObjectifManuel()[t];
+    const objDate = loadObjectifManuelDate()[t];
     const consManuel = loadConsensusManuel()[t];
+    const consDate = loadConsensusManuelDate()[t];
     const costBasis = loadCostBasis()[t];
     const nom = raw && raw.nom ? raw.nom : '';
     const deviseTxt = raw && raw.devise ? raw.devise : guessDevise(t);
@@ -1305,9 +1502,9 @@ function buildPortfolioContext(question){
     if(raw && raw.conseil) parts.push(`conseil interne du widget : ${raw.conseil}`);
     if(raw && raw.niveau_risque !== undefined) parts.push(`risque ${raw.niveau_risque}/10`);
     if(objectifRetenu !== null && objectifRetenu !== undefined){
-      parts.push(`objectif 3 mois : ${fmt(objectifRetenu)} ${deviseTxt}${potentielPct !== null ? ` (${potentielPct > 0 ? '+' : ''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' [saisi]' : ' [estimation]'}`);
+      parts.push(`objectif 3 mois : ${fmt(objectifRetenu)} ${deviseTxt}${potentielPct !== null ? ` (${potentielPct > 0 ? '+' : ''}${fmt(potentielPct)}%)` : ''}${hasObjManuel ? ' [saisi' + (objDate ? ' au ' + frDate(objDate) : '') + ']' : ' [estimation]'}`);
     }
-    if(tier) parts.push(`consensus analystes : ${fmt(consManuel, 2)}/5 (${tier.label}, échelle 1 Acheter → 5 Vendre)`);
+    if(tier) parts.push(`consensus analystes : ${fmt(consManuel, 2)}/5 (${tier.label}, échelle 1 Acheter → 5 Vendre)${consDate ? ' au ' + frDate(consDate) : ''}`);
     if(costBasis !== undefined && costBasis !== null) parts.push(`ma position : prix de revient ${fmt(costBasis)} ${deviseTxt}`);
     lines.push('- ' + parts.join(' — '));
   });
@@ -1355,6 +1552,26 @@ document.getElementById('bulkAddToggle').addEventListener('click', () => {
   const panel = document.getElementById('bulkAddPanel');
   panel.hidden = !panel.hidden;
 });
+
+document.getElementById('dailyUpdateToggle').addEventListener('click', () => {
+  const panel = document.getElementById('dailyUpdatePanel');
+  panel.hidden = !panel.hidden;
+  if(!panel.hidden) renderDailyUpdateTable();
+});
+document.getElementById('dailyUpdatePanel').addEventListener('input', e => {
+  const el = e.target.closest('.dailyPasteInput');
+  if(!el) return;
+  const parsed = parseCoteGeneraleLine(el.value);
+  if(parsed) fillDailyRow(el.dataset.ticker, parsed);
+});
+document.getElementById('dailyUpdateSaveBtn').addEventListener('click', () => {
+  const { count, notes, todayStr } = saveDailyUpdates();
+  document.getElementById('dailyUpdateResult').textContent = count
+    ? `${count} valeur(s) mise(s) à jour pour le ${frDate(todayStr)}. ${notes.join(' ; ')}`
+    : 'Aucune ligne complète à enregistrer (Dernier, Ouv., +Haut et +Bas sont requis pour chaque valeur à mettre à jour).';
+  render();
+  renderDailyUpdateTable();
+});
 document.getElementById('bulkAddBtn').addEventListener('click', () => {
   const raw = document.getElementById('bulkAddInput').value;
   const tokens = raw.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
@@ -1371,6 +1588,7 @@ document.getElementById('bulkAddBtn').addEventListener('click', () => {
   if(added.length){
     persistTickers();
     render();
+    refreshDailyUpdateTableIfOpen();
     added.forEach(loadTicker);
   }
   const parts = [];
@@ -1467,6 +1685,18 @@ document.getElementById('grid').addEventListener('change', e => {
   if(consInput){
     const value = consInput.value.trim() === '' ? null : Number(consInput.value);
     saveConsensusManuel(consInput.dataset.ticker, value);
+    render();
+    return;
+  }
+  const objDateInput = e.target.closest('.objectifManuelDateInput');
+  if(objDateInput){
+    saveObjectifManuelDate(objDateInput.dataset.ticker, objDateInput.value || null);
+    render();
+    return;
+  }
+  const consDateInput = e.target.closest('.consensusManuelDateInput');
+  if(consDateInput){
+    saveConsensusManuelDate(consDateInput.dataset.ticker, consDateInput.value || null);
     render();
     return;
   }
