@@ -57,6 +57,27 @@
   .position .pnl.up{color:var(--good);} .position .pnl.down{color:var(--bad);} .position .pnl.flat{color:var(--warn);}
   .position .note{margin-top:6px; color:var(--ink-2); background:var(--surface-2); border-radius:6px; padding:6px 8px;}
   .position .clear{background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.76rem; padding:0;}
+  .hist-block{margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); font-size:.82rem;}
+  .hist-source{display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;}
+  .hist-source input{flex:1; min-width:120px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; font-size:.78rem; font-family:inherit;}
+  .hist-source a{font-size:.78rem; white-space:nowrap; color:var(--accent);}
+  .hist-toggle{background:var(--surface-2); border:none; border-radius:6px; padding:6px 10px; font-size:.78rem; cursor:pointer; color:var(--ink);}
+  .hist-table{width:100%; border-collapse:collapse; margin-top:6px; font-size:.78rem;}
+  .hist-table th, .hist-table td{padding:3px 4px; text-align:right; border-bottom:1px solid var(--surface-2);}
+  .hist-table th:first-child, .hist-table td:first-child{text-align:left;}
+  .hist-table td.up{color:var(--good);} .hist-table td.down{color:var(--bad);}
+  .hist-table input{width:64px; padding:3px 4px; border:1px solid var(--border); border-radius:5px; font-size:.78rem; font-family:inherit; text-align:right;}
+  .hist-seance-row{display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-top:8px; font-size:.76rem;}
+  .hist-seance-row input{padding:3px 5px; border:1px solid var(--border); border-radius:5px; font-size:.78rem; font-family:inherit; width:76px;}
+  .hist-seance-row input[type=date]{width:120px;}
+  .hist-done{margin-top:8px; color:var(--ink-muted); font-size:.76rem;}
+  .hist-reset{background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.74rem; padding:6px 0 0; display:block;}
+  .hist-paste{width:100%; min-height:54px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:.76rem; font-family:inherit; resize:vertical; margin-bottom:4px;}
+  .hist-paste-row{display:flex; gap:6px; align-items:flex-start; margin-bottom:8px;}
+  .hist-paste-row button{white-space:nowrap; background:var(--accent); color:#fff; border:none; border-radius:6px; padding:6px 10px; font-size:.76rem; cursor:pointer;}
+  .hist-hint{font-size:.72rem; color:var(--ink-muted); margin:0 0 6px;}
+  .hist-preview{margin-top:8px;}
+  .hist-preview-label{font-size:.72rem; color:var(--ink-muted); margin-bottom:2px;}
 </style>
 </head>
 <body>
@@ -82,7 +103,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {} };
+const state = { tickers: [], data: {}, histOpenForms: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -114,6 +135,268 @@ function saveCostBasis(ticker, value){
   if(value===null || value===undefined || isNaN(value)) delete store[ticker];
   else store[ticker] = value;
   try{ localStorage.setItem('stockAdvice.prixRevient', JSON.stringify(store)); }catch(e){}
+}
+
+// Historique de séances et tableau de variations (1er janvier, 1 semaine,
+// 1 mois, 3 mois, 6 mois, 1 an, 3 ans, 5 ans, 10 ans) — saisi manuellement
+// par vous depuis une source de votre choix (ex. Boursorama), stocké
+// UNIQUEMENT sur cet appareil, jamais envoyé au backend. Le tableau saisi
+// une fois à l'ajout (le "seed") sert de référence ; chaque séance ajoutée
+// ensuite fait progressivement basculer les périodes courtes (1 semaine,
+// 1 mois...) vers un calcul entièrement issu de vos saisies, tandis que les
+// périodes longues (5 ans, 10 ans...) restent ancrées sur le seed tant que
+// l'historique saisi ne les couvre pas entièrement — voir computeVariations.
+const HIST_PERIODS = [
+  {key:'ytd',   label:'1er janvier', days:null},
+  {key:'1sem',  label:'1 semaine',   days:7},
+  {key:'1mois', label:'1 mois',      days:30},
+  {key:'3mois', label:'3 mois',      days:91},
+  {key:'6mois', label:'6 mois',      days:182},
+  {key:'1an',   label:'1 an',        days:365},
+  {key:'3ans',  label:'3 ans',       days:1095},
+  {key:'5ans',  label:'5 ans',       days:1825},
+  {key:'10ans', label:'10 ans',      days:3650},
+];
+
+function loadHistoriqueStore(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.historique') || '{}'); }catch(e){ return {}; }
+}
+function saveHistoriqueStore(store){
+  try{ localStorage.setItem('stockAdvice.historique', JSON.stringify(store)); }catch(e){}
+}
+function loadSourceUrls(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.sourceUrl') || '{}'); }catch(e){ return {}; }
+}
+function saveSourceUrl(ticker, url){
+  const store = loadSourceUrls();
+  if(url) store[ticker] = url; else delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.sourceUrl', JSON.stringify(store)); }catch(e){}
+}
+
+function isoDate(d){ return d.toISOString().slice(0,10); }
+function daysAgo(n){ const d = new Date(); d.setDate(d.getDate() - n); return d; }
+function startOfYear(){ const d = new Date(); return new Date(d.getFullYear(), 0, 1); }
+
+// Calcule, pour chaque période, la variation % et les plus haut/bas à
+// afficher : haut/bas combinent toujours le seed et vos séances saisies
+// (un plus haut/bas réel ne peut que confirmer ou dépasser le seed, jamais
+// le contredire). La variation %, elle, ne peut être recalculée exactement
+// que si vos séances couvrent DEJA toute la période demandée ; sinon on
+// prolonge le seed par la performance réellement observée depuis le début
+// de votre suivi (composition), plutôt que de l'afficher figée pour
+// toujours.
+function computeVariations(ticker, currentClose){
+  const store = loadHistoriqueStore();
+  const entry = store[ticker];
+  if(!entry || !entry.seed) return null;
+  const seances = (entry.seances || []).slice().sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+  const earliest = seances.length ? seances[0] : null;
+  const latestClose = seances.length ? seances[seances.length-1].clo : currentClose;
+  return HIST_PERIODS.map(p => {
+    const windowStart = p.key === 'ytd' ? startOfYear() : daysAgo(p.days);
+    const windowStartStr = isoDate(windowStart);
+    const inWindow = seances.filter(s => s.date >= windowStartStr);
+    const seed = entry.seed.periods[p.key] || {};
+    let haut = seed.haut, bas = seed.bas;
+    inWindow.forEach(s => {
+      if(haut === undefined || haut === null || s.haut > haut) haut = s.haut;
+      if(bas === undefined || bas === null || s.bas < bas) bas = s.bas;
+    });
+    let var_pct, computed;
+    if(earliest && earliest.date <= windowStartStr){
+      const ref = inWindow[0] || earliest;
+      var_pct = ((latestClose - ref.clo) / ref.clo) * 100;
+      computed = true;
+    } else if(earliest && seed.var_pct !== undefined && seed.var_pct !== null){
+      var_pct = ((1 + seed.var_pct/100) * (latestClose / earliest.clo) - 1) * 100;
+      computed = false;
+    } else {
+      var_pct = seed.var_pct;
+      computed = false;
+    }
+    return { key:p.key, label:p.label, var_pct, haut, bas, computed };
+  });
+}
+
+function readSeanceForm(ticker){
+  const dateEl = document.querySelector(`.histSeanceDate[data-ticker="${ticker}"]`);
+  const date = dateEl ? dateEl.value : '';
+  const get = f => {
+    const el = document.querySelector(`.histSeanceInput[data-ticker="${ticker}"][data-field="${f}"]`);
+    const v = el ? Number(el.value) : NaN;
+    return v;
+  };
+  const seance = { date, ouv: get('ouv'), haut: get('haut'), bas: get('bas'), clo: get('clo') };
+  if(!seance.date || [seance.ouv, seance.haut, seance.bas, seance.clo].some(v => isNaN(v))) return null;
+  return seance;
+}
+
+function readSeedForm(ticker){
+  const periods = {};
+  HIST_PERIODS.forEach(p => {
+    const get = f => {
+      const el = document.querySelector(`.histSeedInput[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
+      const v = el ? Number(el.value) : NaN;
+      return isNaN(v) ? undefined : v;
+    };
+    periods[p.key] = { var_pct: get('var_pct'), haut: get('haut'), bas: get('bas') };
+  });
+  return periods;
+}
+
+// Reconnaissance des libellés de période dans un texte collé tel quel
+// depuis un tableau (ex. Boursorama) : les cellules copiées arrivent
+// souvent à la suite les unes des autres, sans mise en forme. On repère la
+// position de chaque libellé connu dans l'ordre où ils apparaissent, puis
+// on ne lit que les nombres compris entre deux libellés consécutifs — les
+// trois premiers de chaque segment sont, dans l'ordre, la variation %, le
+// plus haut et le plus bas de cette période. Une période dont le libellé
+// n'est pas retrouvé est simplement laissée de côté (à saisir à la main).
+const PERIOD_LABEL_PATTERNS = [
+  {key:'ytd',   re:/1\s*er\s*janvier/i},
+  {key:'1sem',  re:/1\s*semaine/i},
+  {key:'1mois', re:/1\s*mois(?!\s*\d)/i},
+  {key:'3mois', re:/3\s*mois/i},
+  {key:'6mois', re:/6\s*mois/i},
+  {key:'1an',   re:/1\s*ans?(?!\s*\d)/i},
+  {key:'3ans',  re:/3\s*ans/i},
+  {key:'5ans',  re:/5\s*ans/i},
+  {key:'10ans', re:/10\s*ans/i},
+];
+
+function parseBoursoramaPaste(text){
+  if(!text) return {};
+  const found = PERIOD_LABEL_PATTERNS.map(p => {
+    const m = p.re.exec(text);
+    return m ? {key: p.key, start: m.index, end: m.index + m[0].length} : null;
+  }).filter(Boolean).sort((a,b) => a.start - b.start);
+  const result = {};
+  found.forEach((f, i) => {
+    const segEnd = (i + 1 < found.length) ? found[i+1].start : text.length;
+    const segment = text.slice(f.end, segEnd);
+    const nums = (segment.match(/-?\d[\d\s ]*[.,]\d+/g) || [])
+      .map(s => parseFloat(s.replace(/[\s ]/g, '').replace(',', '.')));
+    if(nums.length >= 1) result[f.key] = { var_pct: nums[0], haut: nums[1], bas: nums[2] };
+  });
+  return result;
+}
+
+// Aperçu mis en forme (couleurs vert/rouge selon le signe) du tableau en
+// cours de saisie, recalculé à chaque frappe/collage — lit directement les
+// champs affichés (pas le stockage), donc reflète toujours ce qui est
+// visible à l'écran avant l'enregistrement.
+function renderSeedPreview(ticker){
+  const el = document.querySelector(`.hist-preview[data-ticker="${ticker}"]`);
+  if(!el) return;
+  const periods = readSeedForm(ticker);
+  const rows = HIST_PERIODS.map(p => {
+    const v = periods[p.key] || {};
+    if(v.var_pct === undefined && v.haut === undefined && v.bas === undefined) return '';
+    const cls = (v.var_pct > 0) ? 'up' : (v.var_pct < 0 ? 'down' : '');
+    return `<tr>
+      <td>${p.label}</td>
+      <td class="${cls}">${v.var_pct !== undefined ? (v.var_pct>0?'+':'')+fmt(v.var_pct,2)+'%' : '—'}</td>
+      <td>${v.haut !== undefined ? fmt(v.haut) : '—'}</td>
+      <td>${v.bas !== undefined ? fmt(v.bas) : '—'}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = rows
+    ? `<div class="hist-preview-label">Aperçu (avant enregistrement)</div>
+       <table class="hist-table"><thead><tr><th>Période</th><th>Var.</th><th>+ Haut</th><th>+ Bas</th></tr></thead>
+       <tbody>${rows}</tbody></table>`
+    : '';
+}
+
+function fillSeedInputs(ticker, periods){
+  HIST_PERIODS.forEach(p => {
+    const vals = periods[p.key];
+    if(!vals) return;
+    ['var_pct', 'haut', 'bas'].forEach(f => {
+      if(vals[f] === undefined || isNaN(vals[f])) return;
+      const el = document.querySelector(`.histSeedInput[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
+      if(el) el.value = vals[f];
+    });
+  });
+}
+
+function upsertSeance(ticker, seance){
+  const store = loadHistoriqueStore();
+  if(!store[ticker]) store[ticker] = { seed: null, seances: [] };
+  const list = store[ticker].seances || [];
+  const idx = list.findIndex(s => s.date === seance.date);
+  if(idx >= 0) list[idx] = seance; else list.push(seance);
+  store[ticker].seances = list;
+  saveHistoriqueStore(store);
+}
+
+function historiqueBox(ticker, currentClose){
+  const store = loadHistoriqueStore();
+  const entry = store[ticker];
+  const sourceUrl = loadSourceUrls()[ticker] || '';
+  const todayStr = isoDate(new Date());
+
+  const sourceRow = `<div class="hist-source">
+      <input type="url" class="histSourceInput" data-ticker="${ticker}" placeholder="Lien de la fiche (ex. Boursorama) pour ${ticker}" value="${sourceUrl}">
+      ${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener">Voir la fiche ↗</a>` : ''}
+    </div>`;
+
+  const seanceFields = `
+      <span>Séance du</span> <input type="date" class="histSeanceDate" data-ticker="${ticker}" value="${todayStr}">
+      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="ouv" placeholder="Ouverture">
+      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="haut" placeholder="Plus haut">
+      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="bas" placeholder="Plus bas">
+      <input type="number" step="0.01" class="histSeanceInput" data-ticker="${ticker}" data-field="clo" placeholder="Clôture">`;
+
+  if(!entry || !entry.seed){
+    const open = state.histOpenForms.has(ticker);
+    const rows = HIST_PERIODS.map(p => `
+      <tr>
+        <td>${p.label}</td>
+        <td><input type="number" step="0.01" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="var_pct" placeholder="%"></td>
+        <td><input type="number" step="0.01" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="haut" placeholder="+ haut"></td>
+        <td><input type="number" step="0.01" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="bas" placeholder="+ bas"></td>
+      </tr>`).join('');
+    return `<div class="hist-block">
+      ${sourceRow}
+      <button class="hist-toggle" data-action="toggle-hist-form" data-ticker="${ticker}">📋 Saisir les données historiques</button>
+      <div ${open ? '' : 'hidden'}>
+        <p class="hist-hint">Collez ci-dessous le tableau tel qu'il apparaît sur la page (période, variation, plus haut, plus bas), puis appuyez sur Entrée ou cliquez sur « Analyser » — les champs ci-dessous se remplissent automatiquement. Vous pouvez ensuite corriger chaque case à la main avant d'enregistrer.</p>
+        <div class="hist-paste-row">
+          <textarea class="hist-paste" data-ticker="${ticker}" placeholder="Collez ici le tableau copié (1er janvier ... 10 ans)"></textarea>
+          <button data-action="parse-paste" data-ticker="${ticker}">Analyser</button>
+        </div>
+        <table class="hist-table">
+          <thead><tr><th>Période</th><th>Var.</th><th>+ Haut</th><th>+ Bas</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="hist-preview" data-ticker="${ticker}"></div>
+        <div class="hist-seance-row">${seanceFields}</div>
+        <button data-action="save-seed" data-ticker="${ticker}">Enregistrer</button>
+      </div>
+    </div>`;
+  }
+
+  const variations = computeVariations(ticker, currentClose) || [];
+  const already = (entry.seances || []).some(s => s.date === todayStr);
+  const rowsHtml = variations.map(v => `
+    <tr>
+      <td>${v.label}</td>
+      <td class="${v.var_pct>0?'up':(v.var_pct<0?'down':'')}">${v.var_pct>0?'+':''}${fmt(v.var_pct,2)}%</td>
+      <td>${fmt(v.haut)}</td>
+      <td>${fmt(v.bas)}</td>
+      <td title="${v.computed ? 'Calculé à partir de vos séances saisies' : 'Encore basé sur votre saisie initiale du '+entry.seed.date+' (pas assez de séances saisies pour ce recul)'}">${v.computed ? '📈' : '🗓️'}</td>
+    </tr>`).join('');
+  return `<div class="hist-block">
+    ${sourceRow}
+    <table class="hist-table">
+      <thead><tr><th>Période</th><th>Var.</th><th>+ Haut</th><th>+ Bas</th><th></th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    ${already
+      ? `<div class="hist-done">Séance du ${todayStr} déjà enregistrée.</div>`
+      : `<div class="hist-seance-row">${seanceFields}<button data-action="add-seance" data-ticker="${ticker}">Ajouter</button></div>`}
+    <button class="hist-reset" data-action="reset-seed" data-ticker="${ticker}">Ré-saisir les valeurs de référence</button>
+  </div>`;
 }
 
 // Analyse de la position par rapport au prix de revient — observations
@@ -173,6 +456,8 @@ function cardContent(ticker, d, alertMsgs){
     ? alertMsgs.map(a=>`<div class="alertbox">${a.message}</div>`).join('')
     : '';
   const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
+  const objectifNonFiable = (d.objectif_3_mois && d.objectif_3_mois.fiable === false)
+    ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">${d.objectif_3_mois.avertissement}</div>` : '';
   const devise = currencySymbol(d.devise);
   const pea = d.eligibilite_pea || {};
   const peaLabel = pea.estime===true ? 'Oui' : (pea.estime===false ? 'Non' : 'Indéterminé');
@@ -217,21 +502,28 @@ function cardContent(ticker, d, alertMsgs){
     <div class="price">${fmt(d.seance.close)} ${devise}</div>
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
-      <span>Objectif 3 mois : <b>${fmt(d.objectif_3_mois.retenu)} ${devise}</b> (${d.objectif_3_mois.potentiel_rendement_pct>0?'+':''}${fmt(d.objectif_3_mois.potentiel_rendement_pct)}%)</span>
+      <span>Objectif 3 mois : <b>${fmt(d.objectif_3_mois.retenu)} ${devise}</b> (${d.objectif_3_mois.potentiel_rendement_pct>0?'+':''}${fmt(d.objectif_3_mois.potentiel_rendement_pct)}%)${d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : ''}</span>
     </div>
     ${peaBox}
     ${positionBox}
     <div class="justif">${justif}</div>
     ${bascule}
+    ${objectifNonFiable}
     ${alertsHtml}
+    ${historiqueBox(ticker, cours)}
   </div>`;
+}
+
+function grid_el_contains_input(el){
+  const grid = document.getElementById('grid');
+  return grid && grid.contains(el) && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
 }
 
 function render(){
   // Évite de reconstruire la grille (et donc de couper la saisie en cours)
   // si vous êtes en train de taper un prix de revient au moment où un
   // rafraîchissement automatique se déclenche.
-  if(document.activeElement && document.activeElement.classList.contains('costBasisInput')) return;
+  if(document.activeElement && grid_el_contains_input(document.activeElement)) return;
   const grid = document.getElementById('grid');
   grid.innerHTML = state.tickers.map(t => {
     const entry = state.data[t];
@@ -300,6 +592,81 @@ document.getElementById('grid').addEventListener('click', e => {
   if(!btn) return;
   saveCostBasis(btn.dataset.ticker, null);
   render();
+});
+
+document.getElementById('grid').addEventListener('click', e => {
+  const toggleBtn = e.target.closest('[data-action="toggle-hist-form"]');
+  if(toggleBtn){
+    const t = toggleBtn.dataset.ticker;
+    if(state.histOpenForms.has(t)) state.histOpenForms.delete(t); else state.histOpenForms.add(t);
+    render();
+    return;
+  }
+  const saveSeedBtn = e.target.closest('[data-action="save-seed"]');
+  if(saveSeedBtn){
+    const t = saveSeedBtn.dataset.ticker;
+    const seance = readSeanceForm(t);
+    if(!seance){ alert('Merci de renseigner la date et les 4 valeurs de la séance (ouverture, plus haut, plus bas, clôture).'); return; }
+    const periods = readSeedForm(t);
+    const store = loadHistoriqueStore();
+    if(!store[t]) store[t] = { seed: null, seances: [] };
+    store[t].seed = { date: seance.date, periods };
+    saveHistoriqueStore(store);
+    upsertSeance(t, seance);
+    state.histOpenForms.delete(t);
+    render();
+    return;
+  }
+  const addSeanceBtn = e.target.closest('[data-action="add-seance"]');
+  if(addSeanceBtn){
+    const t = addSeanceBtn.dataset.ticker;
+    const seance = readSeanceForm(t);
+    if(!seance){ alert('Merci de renseigner la date et les 4 valeurs (ouverture, plus haut, plus bas, clôture).'); return; }
+    upsertSeance(t, seance);
+    render();
+    return;
+  }
+  const parseBtn = e.target.closest('[data-action="parse-paste"]');
+  if(parseBtn){
+    const t = parseBtn.dataset.ticker;
+    const textEl = document.querySelector(`.hist-paste[data-ticker="${t}"]`);
+    const periods = parseBoursoramaPaste(textEl ? textEl.value : '');
+    fillSeedInputs(t, periods);
+    renderSeedPreview(t);
+    return;
+  }
+  const resetBtn = e.target.closest('[data-action="reset-seed"]');
+  if(resetBtn){
+    const t = resetBtn.dataset.ticker;
+    if(!confirm('Ré-saisir les valeurs de référence pour ' + t + ' ? Les séances déjà enregistrées sont conservées.')) return;
+    const store = loadHistoriqueStore();
+    if(store[t]) store[t].seed = null;
+    saveHistoriqueStore(store);
+    state.histOpenForms.add(t);
+    render();
+    return;
+  }
+});
+document.getElementById('grid').addEventListener('change', e => {
+  const srcInput = e.target.closest('.histSourceInput');
+  if(!srcInput) return;
+  saveSourceUrl(srcInput.dataset.ticker, srcInput.value.trim());
+});
+document.getElementById('grid').addEventListener('keydown', e => {
+  const ta = e.target.closest('.hist-paste');
+  if(!ta) return;
+  if(e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    const t = ta.dataset.ticker;
+    const periods = parseBoursoramaPaste(ta.value);
+    fillSeedInputs(t, periods);
+    renderSeedPreview(t);
+  }
+});
+document.getElementById('grid').addEventListener('input', e => {
+  const el = e.target.closest('.histSeedInput');
+  if(!el) return;
+  renderSeedPreview(el.dataset.ticker);
 });
 
 loadPersisted();
