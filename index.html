@@ -134,6 +134,15 @@
   </div>
 
   <div class="config" style="margin-bottom:18px;">
+    <button class="hist-toggle" id="weeklyUpdateToggle" type="button">🗓️ Mise à jour hebdomadaire (historique 5 jours, valeur par valeur)</button>
+    <div id="weeklyUpdatePanel" hidden style="margin-top:8px;">
+      <p class="hist-hint">Complète le tableau quotidien ci-dessus : celui-ci reprend, pour <b>une valeur à la fois</b>, le tableau « Historique 5 jours » copié directement depuis SA fiche Boursorama (5 jours en colonnes) — pratique pour rattraper toute une semaine en un seul collage par valeur plutôt que jour par jour. Pour chaque valeur listée ci-dessous, ouvrez sa fiche, copiez son tableau « Historique 5 jours » et collez-le dans la case correspondante : les colonnes se remplissent automatiquement (dates réelles comprises), corrigez si besoin, puis cliquez sur « Enregistrer cette semaine ».</p>
+      <p class="hist-hint">Le « Var. » collé est indicatif, comme pour le tableau quotidien : il ne remplace jamais la variation recalculée automatiquement à partir de vos clôtures déjà enregistrées. Le volume est automatiquement converti en milliers.</p>
+      <div id="weeklyUpdateBody"></div>
+    </div>
+  </div>
+
+  <div class="config" style="margin-bottom:18px;">
     <label for="askQuestion" style="display:block; margin-bottom:6px; font-weight:600;">Poser une question à Claude (sur une valeur suivie ou d'ordre général)</label>
     <textarea id="askQuestion" class="hist-paste" placeholder="Ex : Que penses-tu d'Alstom en ce moment ? — ou — J'ai 1000 € à investir, sur laquelle de mes valeurs suivies me conseilles-tu de me positionner et à quel cours ?"></textarea>
     <div class="hist-paste-row" style="margin-top:0;">
@@ -1114,6 +1123,188 @@ function saveDailyUpdates(){
   return { count, notes, todayStr };
 }
 
+// Mise à jour hebdomadaire (une valeur à la fois, mais toutes les valeurs
+// suivies sont listées dans le même panneau) : reprend le tableau
+// « Historique 5 jours » tel qu'il apparaît directement sur la fiche
+// Boursorama d'UNE valeur (5 jours en colonnes, Dernier/Var./Ouv./+Haut/
+// +Bas/Vol. en lignes) — complémentaire du tableau quotidien groupé
+// ci-dessus, qui lui reprend une seule journée mais pour TOUTES les valeurs
+// à la fois depuis la "cote générale". Utile pour rattraper une semaine
+// entière en un seul collage par valeur plutôt que jour par jour.
+// Exemple de texte collé (Alstom) :
+//   Historique 5 jours
+//   \t21 September21-09 \t22 September22-09 \t23 September23-09 \t24 September24-09 \t25 September25-09
+//   Der. \t14,955 \t15,27 \t14,83 \t14,54 \t14,545
+//   Var. \t-2,13% \t+2,11% \t-2,88% \t-1,96% \t+0,03%
+//   Ouv. \t15,30 \t14,985 \t15,285 \t14,73 \t14,60
+//   +Haut \t15,305 \t15,285 \t15,515 \t14,815 \t14,76
+//   +Bas \t14,775 \t14,90 \t14,79 \t14,505 \t14,475
+//   Vol. \t1 903 061 \t1 538 964 \t1 420 323 \t1 427 727 \t1 588 396
+// Contrairement au tableau quotidien (aucun libellé, lecture positionnelle),
+// ce tableau a des libellés de ligne explicites : on retrouve chaque ligne
+// par son libellé (peu importe la casse/le "." final), puis on lit les 5
+// cellules tabulées qui suivent — comme pour l'historique 9 périodes, mais
+// ligne par ligne plutôt que par recherche de libellé dans tout le texte.
+// Les dates réelles (JJ-MM) sont extraites de l'en-tête, pas déduites du
+// jour courant : on évite ainsi toute date fausse si vous collez le tableau
+// un autre jour que celui de la 5e colonne.
+function parseWeeklyHistoriquePaste(text){
+  if(!text) return null;
+  const lines = String(text).split('\n').map(l => l.replace(/\r$/,''));
+  const headerText = lines.slice(0, 4).join(' ');
+  // Pas de \b avant le jour : sur un copier-coller direct depuis la page, le
+  // jour est collé sans espace au nom du mois qui le précède (ex.
+  // "21 September21-09"), donc aucune frontière de mot ne les sépare.
+  const dateMatches = [...headerText.matchAll(/(\d{1,2})-(\d{1,2})\b/g)].slice(0,5);
+  if(dateMatches.length < 5) return null;
+  const now = Date.now();
+  const dates = dateMatches.map(([, dStr, mStr]) => {
+    const day = parseInt(dStr,10), month = parseInt(mStr,10);
+    let year = new Date().getFullYear();
+    let dt = new Date(Date.UTC(year, month-1, day));
+    // Une date "future" (collage juste après un changement d'année) doit en
+    // réalité être rattachée à l'année précédente — Boursorama ne montre
+    // jamais de séance à venir dans cet historique.
+    if(dt.getTime() > now + 86400000){ year -= 1; dt = new Date(Date.UTC(year, month-1, day)); }
+    return dt.toISOString().slice(0,10);
+  });
+
+  const numFromCell = cell => {
+    const cleaned = String(cell).replace(/\(c\)/gi, '').replace(/[%\s ]/g, '').replace(',', '.');
+    const v = parseFloat(cleaned);
+    return isNaN(v) ? NaN : v;
+  };
+  const rowFor = labelRe => {
+    const line = lines.find(l => labelRe.test(l.trim()));
+    if(!line) return null;
+    const cells = line.split('\t').map(c => c.trim()).filter(c => c !== '');
+    const values = cells.slice(1, 6);
+    return values.length >= 5 ? values.slice(0,5).map(numFromCell) : null;
+  };
+
+  const clo = rowFor(/^der\.?\b/i);
+  const ouv = rowFor(/^ouv\.?\b/i);
+  const haut = rowFor(/^\+?\s*haut\b/i);
+  const bas = rowFor(/^\+?\s*bas\b/i);
+  const varJour = rowFor(/^var\.?\b/i);
+  const volRaw = rowFor(/^vol\.?\b/i);
+  if(!clo || !ouv || !haut || !bas) return null;
+
+  return dates.map((date, i) => ({
+    date,
+    clo: clo[i], ouv: ouv[i], haut: haut[i], bas: bas[i],
+    varJour: varJour ? varJour[i] : undefined,
+    volumeK: (volRaw && !isNaN(volRaw[i])) ? Math.round(volRaw[i]/1000) : undefined,
+  }));
+}
+
+function weeklyUpdateBlocks(){
+  if(!state.tickers.length){
+    return `<p class="hist-hint">Ajoutez une valeur pour commencer.</p>`;
+  }
+  return state.tickers.map(t => {
+    const entry = state.data[t];
+    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+    const nom = loadNomManuel()[t] || (raw && raw.nom) || '';
+    const cell = (cls, step, i) => `<td><input type="number" ${step ? `step="${step}"` : ''} class="${cls}" data-ticker="${t}" data-col="${i}" style="width:78px;"></td>`;
+    return `<div class="weekly-block" data-ticker="${t}" style="margin-bottom:16px; padding-bottom:12px; border-bottom:1px dashed var(--border);">
+      <div style="font-weight:600; margin-bottom:4px;">${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.78rem; font-weight:400;">${t}</span></div>
+      <textarea class="weeklyPasteInput" data-ticker="${t}" placeholder="Collez ici le tableau « Historique 5 jours » copié depuis la fiche Boursorama de ${t}" style="min-height:48px;"></textarea>
+      <div style="overflow-x:auto; margin-top:6px;">
+        <table class="hist-table weeklyGrid" data-ticker="${t}">
+          <tbody>
+            <tr><td>Date</td>${[0,1,2,3,4].map(i => `<td><input type="date" class="weeklyDateInput" data-ticker="${t}" data-col="${i}" style="width:112px;"></td>`).join('')}</tr>
+            <tr><td>Dernier</td>${[0,1,2,3,4].map(i => cell('weeklyCloInput','0.0001',i)).join('')}</tr>
+            <tr><td>Var. <span style="color:var(--ink-muted); font-weight:400;">(indicatif)</span></td>${[0,1,2,3,4].map(i => cell('weeklyVarInput','0.01',i)).join('')}</tr>
+            <tr><td>Ouv.</td>${[0,1,2,3,4].map(i => cell('weeklyOuvInput','0.0001',i)).join('')}</tr>
+            <tr><td>+Haut</td>${[0,1,2,3,4].map(i => cell('weeklyHautInput','0.0001',i)).join('')}</tr>
+            <tr><td>+Bas</td>${[0,1,2,3,4].map(i => cell('weeklyBasInput','0.0001',i)).join('')}</tr>
+            <tr><td>Vol. <span style="color:var(--ink-muted); font-weight:400;">(K)</span></td>${[0,1,2,3,4].map(i => cell('weeklyVolInput','1',i)).join('')}</tr>
+          </tbody>
+        </table>
+      </div>
+      <button class="weeklySaveBtn" data-action="save-weekly" data-ticker="${t}" type="button" style="margin-top:6px;">Enregistrer cette semaine</button>
+      <div class="weeklyResult hist-hint" data-ticker="${t}" style="margin-top:4px;"></div>
+    </div>`;
+  }).join('');
+}
+function renderWeeklyUpdatePanel(){
+  const body = document.getElementById('weeklyUpdateBody');
+  if(body) body.innerHTML = weeklyUpdateBlocks();
+}
+function refreshWeeklyUpdatePanelIfOpen(){
+  const panel = document.getElementById('weeklyUpdatePanel');
+  if(panel && !panel.hidden) renderWeeklyUpdatePanel();
+}
+
+function fillWeeklyBlock(ticker, parsed){
+  if(!parsed) return;
+  // La date est une chaîne (AAAA-MM-JJ), pas un nombre : le test isNaN()
+  // utilisé pour les champs numériques la rejetterait à tort, d'où un test
+  // séparé qui accepte toute valeur non vide.
+  const set = (cls, col, v) => {
+    const el = document.querySelector(`.${cls}[data-ticker="${ticker}"][data-col="${col}"]`);
+    if(!el || v === undefined) return;
+    if(cls === 'weeklyDateInput'){ if(v !== '') el.value = v; }
+    else if(!isNaN(v)) el.value = v;
+  };
+  parsed.forEach((day, i) => {
+    set('weeklyDateInput', i, day.date);
+    set('weeklyCloInput', i, day.clo);
+    set('weeklyVarInput', i, day.varJour);
+    set('weeklyOuvInput', i, day.ouv);
+    set('weeklyHautInput', i, day.haut);
+    set('weeklyBasInput', i, day.bas);
+    set('weeklyVolInput', i, day.volumeK);
+  });
+}
+
+function readWeeklyBlock(ticker){
+  const get = (cls, col) => {
+    const el = document.querySelector(`.${cls}[data-ticker="${ticker}"][data-col="${col}"]`);
+    if(!el || el.value.trim() === '') return NaN;
+    return cls === 'weeklyDateInput' ? el.value : Number(el.value);
+  };
+  return [0,1,2,3,4].map(i => ({
+    date: get('weeklyDateInput', i),
+    clo: get('weeklyCloInput', i),
+    varJour: get('weeklyVarInput', i),
+    ouv: get('weeklyOuvInput', i),
+    haut: get('weeklyHautInput', i),
+    bas: get('weeklyBasInput', i),
+    vol: get('weeklyVolInput', i),
+  }));
+}
+
+// Enregistre les (jusqu'à) 5 séances collées pour UNE valeur — même
+// upsertSeance que la saisie individuelle ou le tableau quotidien, donc la
+// variation % reste toujours recalculée localement (jamais celle collée,
+// utilisée seulement pour un contrôle de cohérence a posteriori). Une
+// colonne sans date ou sans Ouv./+Haut/+Bas/Dernier complets est ignorée
+// (jour manquant, ex. jour férié).
+function saveWeeklyBlock(ticker){
+  const cols = readWeeklyBlock(ticker);
+  const notes = [];
+  let count = 0;
+  cols.forEach(col => {
+    if(!col.date || [col.clo, col.ouv, col.haut, col.bas].some(v => isNaN(v))) return;
+    const seance = { date: col.date, ouv: col.ouv, haut: col.haut, bas: col.bas, clo: col.clo };
+    if(!isNaN(col.vol)) seance.volume = col.vol;
+    upsertSeance(ticker, seance);
+    count++;
+    const savedEntry = loadHistoriqueStore()[ticker];
+    const savedSeance = savedEntry && (savedEntry.seances || []).find(s => s.date === col.date);
+    let note = `${frDate(col.date)} : enregistré`;
+    if(!isNaN(col.varJour) && savedSeance && savedSeance.var_pct !== undefined && savedSeance.var_pct !== null){
+      if(Math.abs(savedSeance.var_pct - col.varJour) > 0.5){
+        note += ` — ⚠ écart Var. Boursorama ${col.varJour>0?'+':''}${fmt(col.varJour,2)}% vs calculé ${savedSeance.var_pct>0?'+':''}${fmt(savedSeance.var_pct,2)}%`;
+      }
+    }
+    notes.push(note);
+  });
+  return { count, notes };
+}
+
 function historiqueBox(ticker, currentClose){
   const store = loadHistoriqueStore();
   const entry = store[ticker];
@@ -1461,6 +1652,7 @@ function removeTicker(ticker){
   persistTickers();
   render();
   refreshDailyUpdateTableIfOpen();
+  refreshWeeklyUpdatePanelIfOpen();
 }
 
 function refreshAll(){
@@ -1479,6 +1671,7 @@ document.getElementById('addBtn').addEventListener('click', () => {
   if(guessedUrl) saveSourceUrl(ticker, guessedUrl);
   render();
   refreshDailyUpdateTableIfOpen();
+  refreshWeeklyUpdatePanelIfOpen();
   loadTicker(ticker);
 });
 document.getElementById('tickerInput').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('addBtn').click(); });
@@ -1743,6 +1936,38 @@ document.getElementById('dailyUpdateSaveBtn').addEventListener('click', () => {
   render();
   renderDailyUpdateTable();
 });
+
+document.getElementById('weeklyUpdateToggle').addEventListener('click', () => {
+  const panel = document.getElementById('weeklyUpdatePanel');
+  panel.hidden = !panel.hidden;
+  if(!panel.hidden) renderWeeklyUpdatePanel();
+});
+document.getElementById('weeklyUpdatePanel').addEventListener('input', e => {
+  const el = e.target.closest('.weeklyPasteInput');
+  if(!el) return;
+  const parsed = parseWeeklyHistoriquePaste(el.value);
+  const t = el.dataset.ticker;
+  const resultEl = document.querySelector(`.weeklyResult[data-ticker="${t}"]`);
+  if(parsed){
+    fillWeeklyBlock(t, parsed);
+    if(resultEl) resultEl.textContent = '';
+  } else if(el.value.trim() !== '' && resultEl){
+    resultEl.textContent = '⚠️ Tableau non reconnu — vérifiez que vous avez bien collé le bloc « Historique 5 jours » complet (avec les 5 dates en en-tête).';
+  }
+});
+document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action="save-weekly"]');
+  if(!btn) return;
+  const t = btn.dataset.ticker;
+  const { count, notes } = saveWeeklyBlock(t);
+  const resultEl = document.querySelector(`.weeklyResult[data-ticker="${t}"]`);
+  if(resultEl){
+    resultEl.textContent = count
+      ? `✅ ${count} séance(s) enregistrée(s). ${notes.join(' ; ')}`
+      : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer).";
+  }
+  if(count) render();
+});
 document.getElementById('bulkAddBtn').addEventListener('click', () => {
   const raw = document.getElementById('bulkAddInput').value;
   const tokens = raw.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
@@ -1760,6 +1985,7 @@ document.getElementById('bulkAddBtn').addEventListener('click', () => {
     persistTickers();
     render();
     refreshDailyUpdateTableIfOpen();
+    refreshWeeklyUpdatePanelIfOpen();
     added.forEach(loadTicker);
   }
   const parts = [];
