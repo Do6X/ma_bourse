@@ -17,6 +17,16 @@
     --good:#3f8f5f; --good-soft:#dff0e4;
     --warn:#5b5f52; --warn-soft:#e4e6dc;
     --bad:#b1503f; --bad-soft:#f7e0d9;
+    /* Échelle des recommandations (consensus analystes, note 1 à 5) : un
+       dégradé à 5 teintes distinctes, du vert foncé (Acheter) au rouge
+       (Vendre), demandé explicitement plutôt que les 3 couleurs good/warn/bad
+       réutilisées précédemment (qui confondaient Acheter/Renforcer d'une
+       part et Alléger/Vendre d'autre part). */
+    --tier-acheter:#1f6e3c; --tier-acheter-soft:#dcefe2;
+    --tier-renforcer:#6fb876; --tier-renforcer-soft:#e7f5e5;
+    --tier-conserver:#c9a227; --tier-conserver-soft:#f6eeda;
+    --tier-alleger:#d9822b; --tier-alleger-soft:#f8e6d3;
+    --tier-vendre:#b1503f; --tier-vendre-soft:#f7e0d9;
   }
   *{box-sizing:border-box;}
   body{font-family:ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--ink); margin:0; padding:24px 16px 60px;}
@@ -32,6 +42,11 @@
   .addrow input{flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:.95rem;}
   .addrow button{padding:10px 16px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer;}
   .addrow button:disabled{opacity:.5; cursor:default;}
+  .addrow select{padding:9px 10px; border:1px solid var(--border); border-radius:8px; font-size:.88rem; background:var(--surface); color:var(--ink);}
+  #compareBar button{padding:8px 14px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; font-size:.85rem;}
+  .compare-table{width:100%; border-collapse:collapse; font-size:.8rem; background:var(--surface); border-radius:8px; overflow:hidden;}
+  .compare-table th, .compare-table td{padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);}
+  .compare-table th{background:var(--surface-2); text-align:left;}
   .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px;}
   .card{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; position:relative;}
   .card .head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
@@ -168,6 +183,7 @@
     <button id="addBtn">Ajouter</button>
     <button id="refreshBtn" title="Rafraîchir toutes les valeurs" style="background:var(--surface-2); color:var(--ink);">↻</button>
   </div>
+  <div id="tickerInputError" class="hist-hint" style="display:none; color:var(--bad); margin-top:-14px; margin-bottom:10px;"></div>
   <p class="sub" style="margin-top:-14px;">Valeurs Euronext Paris : ajoutez le suffixe <code>.PA</code> (ex. <code>MC.PA</code> LVMH, <code>TTE.PA</code> TotalEnergies, <code>OR.PA</code> L'Oréal). Les fondamentaux/dividendes de ces valeurs peuvent rester indisponibles selon le plan API configuré côté backend — voir <code>README.md</code>.</p>
 
   <div class="config" style="margin-bottom:18px;">
@@ -180,11 +196,33 @@
     </div>
   </div>
 
+  <div class="addrow" id="sortRow" style="margin-bottom:10px; align-items:center;">
+    <label for="sortSelect" style="font-size:.82rem; color:var(--ink-2); white-space:nowrap;">Trier par :</label>
+    <select id="sortSelect">
+      <option value="alpha">Alphabétique (A→Z)</option>
+      <option value="daily_desc">Performance quotidienne : meilleure d'abord</option>
+      <option value="daily_asc">Performance quotidienne : pire d'abord</option>
+      <option value="weekly_desc">Performance hebdomadaire : meilleure d'abord</option>
+      <option value="weekly_asc">Performance hebdomadaire : pire d'abord</option>
+    </select>
+  </div>
+  <div id="compareBar" class="config" style="display:none; margin-bottom:14px; background:var(--accent-soft);">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span id="compareBarCount" style="font-size:.85rem; font-weight:600;"></span>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="compareBtn" type="button">📊 Comparer</button>
+        <button id="analyseBtn" type="button">🔎 Analyser (copier le prompt)</button>
+        <button id="compareClearBtn" type="button" style="background:var(--surface-2); color:var(--ink);">Désélectionner</button>
+      </div>
+    </div>
+    <div id="compareResult" style="margin-top:10px;"></div>
+  </div>
+
   <div id="grid" class="grid"></div>
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), sortMode: 'alpha', compareSelected: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -195,6 +233,8 @@ function loadPersisted(){
     if(savedBase) document.getElementById('apiBase').value = savedBase;
     const savedTickers = JSON.parse(localStorage.getItem('stockAdvice.tickers') || '[]');
     if(Array.isArray(savedTickers)) state.tickers = savedTickers;
+    const savedSortMode = localStorage.getItem('stockAdvice.sortMode');
+    if(savedSortMode) state.sortMode = savedSortMode;
   }catch(e){ /* stockage indisponible (navigation privée, etc.) : on repart à vide */ }
 }
 function persistApiBase(){
@@ -202,6 +242,9 @@ function persistApiBase(){
 }
 function persistTickers(){
   try{ localStorage.setItem('stockAdvice.tickers', JSON.stringify(state.tickers)); }catch(e){}
+}
+function persistSortMode(){
+  try{ localStorage.setItem('stockAdvice.sortMode', state.sortMode); }catch(e){}
 }
 
 // Prix de revient (coût d'achat moyen par action) — saisi par vous, stocké
@@ -269,17 +312,20 @@ function saveConsensusManuelDate(ticker, date){
   try{ localStorage.setItem('stockAdvice.consensusManuelDate', JSON.stringify(store)); }catch(e){}
 }
 // Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
-// avis) : 1 Acheter, 2 Renforcer, 3 Conserver, 4 Alléger, 5 Vendre. Les
-// paliers .5 servent de frontière entre deux libellés (ex. 1.63 -> Renforcer).
-// C'est notre propre lecture de la note, pas un libellé officiel Boursorama.
+// avis) : chaque tranche entière correspond à un libellé, borne basse
+// incluse et borne haute exclue (ex. 1.99 -> Acheter, 2.00 -> Renforcer) :
+// [1-2[ Acheter, [2-3[ Renforcer, [3-4[ Conserver, [4-5[ Alléger, [5-6[
+// Vendre (la note Boursorama ne dépassant pas 5, cette dernière tranche ne
+// couvre en pratique que la valeur 5 elle-même). C'est notre propre lecture
+// de la note, pas un libellé officiel Boursorama.
 function consensusTier(value){
   if(value===null || value===undefined || isNaN(value)) return null;
   const v = Number(value);
-  if(v <= 1.5) return {label:'Acheter', color:'var(--good)'};
-  if(v <= 2.5) return {label:'Renforcer', color:'var(--good)'};
-  if(v <= 3.5) return {label:'Conserver', color:'var(--warn)'};
-  if(v <= 4.5) return {label:'Alléger', color:'var(--bad)'};
-  return {label:'Vendre', color:'var(--bad)'};
+  if(v < 2) return {label:'Acheter', color:'var(--tier-acheter)', soft:'var(--tier-acheter-soft)'};
+  if(v < 3) return {label:'Renforcer', color:'var(--tier-renforcer)', soft:'var(--tier-renforcer-soft)'};
+  if(v < 4) return {label:'Conserver', color:'var(--tier-conserver)', soft:'var(--tier-conserver-soft)'};
+  if(v < 5) return {label:'Alléger', color:'var(--tier-alleger)', soft:'var(--tier-alleger-soft)'};
+  return {label:'Vendre', color:'var(--tier-vendre)', soft:'var(--tier-vendre-soft)'};
 }
 // Devine la devise à partir du suffixe du ticker — utilisé uniquement en cas
 // d'échec du backend (ticker non reconnu par l'API, ex. Ekinops), quand la
@@ -289,6 +335,54 @@ function guessDevise(ticker){
   if(t.endsWith('.PA')) return 'EUR';
   if(t.endsWith('.L')) return 'GBP';
   return 'USD';
+}
+
+// Marché de cotation déduit du suffixe du ticker (convention Yahoo/FMP),
+// affiché à titre indicatif : le backend ne renvoie aucun champ "marché"
+// (contrairement au secteur, voir d.secteur, fourni par le profil
+// entreprise FMP/Yahoo), donc cette information est entièrement devinée
+// côté widget à partir du suffixe, comme guessDevise ci-dessus. Un ticker
+// sans suffixe reconnu est supposé coté aux États-Unis (comportement
+// inchangé pour la devise de repli).
+const TICKER_SUFFIX_MARCHE = {
+  '.PA': 'Euronext Paris', '.AS': 'Euronext Amsterdam', '.BR': 'Euronext Bruxelles',
+  '.LS': 'Euronext Lisbonne', '.IR': 'Euronext Dublin',
+  '.MC': 'Bourse de Madrid', '.MI': 'Borsa Italiana (Milan)',
+  '.DE': 'Deutsche Börse (Xetra)', '.F': 'Bourse de Francfort', '.VI': 'Bourse de Vienne',
+  '.HE': 'Nasdaq Helsinki', '.L': 'London Stock Exchange', '.SW': 'SIX Swiss Exchange',
+  '.ST': 'Nasdaq Stockholm', '.CO': 'Nasdaq Copenhague', '.OL': 'Bourse d\'Oslo',
+  '.TO': 'Bourse de Toronto (TSX)', '.V': 'TSX Venture', '.HK': 'Bourse de Hong Kong',
+  '.T': 'Bourse de Tokyo', '.AX': 'ASX (Australie)', '.NZ': 'NZX (Nouvelle-Zélande)',
+};
+function guessMarche(ticker){
+  const t = (ticker || '').toUpperCase();
+  for(const suffix in TICKER_SUFFIX_MARCHE){
+    if(t.endsWith(suffix)) return TICKER_SUFFIX_MARCHE[suffix];
+  }
+  return 'NYSE / Nasdaq (probable)';
+}
+
+// Sécurité des données : le ticker est utilisé tel quel à de très nombreux
+// endroits du HTML généré, y compris à l'intérieur d'attributs et de petits
+// scripts inline (ex. onclick="removeTicker('TICKER')"). Plutôt que
+// d'échapper individuellement chacun de ces usages (risque d'en oublier un),
+// on valide une bonne fois pour toutes, à la saisie, que le ticker ne peut
+// contenir AUCUN caractère qui permettrait d'en sortir (guillemets,
+// apostrophes, chevrons...) : seuls lettres, chiffres, point, tiret et
+// accent circonflexe (ex. certains indices) sont acceptés, jusqu'à 12
+// caractères (même limite que le champ de saisie).
+function isValidTickerFormat(ticker){
+  return /^[A-Z0-9.^-]{1,12}$/.test(ticker || '');
+}
+
+// Sécurité des données : le lien vers la fiche source (Boursorama ou autre)
+// est une URL saisie librement par vous. On ne la rend cliquable (<a href>)
+// que si elle commence bien par http(s):// — un lien en "javascript:" (ou
+// toute autre pseudo-URL) resterait affiché en texte simple plutôt que
+// d'être rendu cliquable, ce qui évite qu'un lien copié-collé par erreur ne
+// s'exécute au clic.
+function isHttpUrl(url){
+  return /^https?:\/\//i.test((url || '').trim());
 }
 
 // Bloc "objectif de cours / consensus analystes" saisis à la main — affiché
@@ -301,8 +395,14 @@ function analysteBox(ticker, devise){
   const consManuel = loadConsensusManuel()[ticker];
   const consDate = loadConsensusManuelDate()[ticker];
   const tier = consensusTier(consManuel);
+  // Jauge à 5 segments, un par palier de l'échelle (toujours dans sa propre
+  // couleur pour que la progression du dégradé soit visible même avant toute
+  // saisie) ; seul le segment correspondant à la note saisie est mis en
+  // évidence (opacité pleine), les autres restent estompés.
+  const tierColors = ['var(--tier-acheter)','var(--tier-renforcer)','var(--tier-conserver)','var(--tier-alleger)','var(--tier-vendre)'];
+  const activeBucket = tier ? Math.min(5, Math.max(1, Math.floor(Number(consManuel)))) : null;
   const gauge = tier ? `<div style="display:flex; gap:2px; margin:4px 0 2px; max-width:170px;">
-      ${[1,2,3,4,5].map(n => `<div style="flex:1; height:6px; border-radius:3px; background:${Math.round(consManuel)===n ? tier.color : 'var(--surface-2)'};" title="${n}"></div>`).join('')}
+      ${[1,2,3,4,5].map(n => `<div style="flex:1; height:6px; border-radius:3px; background:${tierColors[n-1]}; opacity:${activeBucket===n ? '1' : '.28'};" title="${n}"></div>`).join('')}
     </div>` : '';
   return `<div class="hist-block">
     <div class="hist-source">
@@ -314,11 +414,11 @@ function analysteBox(ticker, devise){
     <div class="hist-source">
       <span style="min-width:190px;">Consensus analystes :</span>
       <input type="number" step="0.01" min="1" max="5" class="consensusManuelInput" data-ticker="${ticker}" placeholder="ex. 1.63" value="${consManuel!==undefined && consManuel!==null ? consManuel : ''}">
-      ${tier ? `<span style="font-size:.8rem;"><b style="color:${tier.color}">${tier.label}</b></span>` : ''}
+      ${tier ? `<span style="font-size:.8rem; font-weight:600; padding:2px 8px; border-radius:6px; background:${tier.soft}; color:${tier.color};">${tier.label}</span>` : ''}
       <input type="date" class="consensusManuelDateInput" data-ticker="${ticker}" value="${consDate || ''}" title="Date du consensus telle qu'affichée sur la fiche source (ex. « au 18/08/26 » sur Boursorama)">
     </div>
     ${(objDate || consDate) ? `<div class="hist-hint" style="margin:0 0 2px;">${objDate ? 'Objectif au ' + frDate(objDate) : ''}${(objDate && consDate) ? ' · ' : ''}${consDate ? 'Consensus au ' + frDate(consDate) : ''}</div>` : ''}
-    ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle Boursorama (note moyenne) : 1 Acheter · 2 Renforcer · 3 Conserver · 4 Alléger · 5 Vendre</div>${gauge}` : ''}
+    ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle (note moyenne) : [1-2[ Acheter · [2-3[ Renforcer · [3-4[ Conserver · [4-5[ Alléger · [5-6[ Vendre</div>${gauge}` : ''}
     ${autresObjectifsHtml(ticker, devise)}
   </div>`;
 }
@@ -379,7 +479,7 @@ function peaBox(ticker, pea){
         <input type="checkbox" class="peaManuelCheckbox" data-ticker="${ticker}" ${peaManuel ? 'checked' : ''}>
         J'ai vérifié : cette valeur est éligible au PEA
       </label>
-      ${(!peaManuel && pea && pea.avertissement) ? `<span style="font-size:.78rem; color:var(--ink-muted);">⚠ ${pea.avertissement}</span>` : ''}
+      ${(!peaManuel && pea && pea.avertissement) ? `<span style="font-size:.78rem; color:var(--ink-muted);">⚠ ${escapeHtml(pea.avertissement)}</span>` : ''}
     </div>`;
 }
 
@@ -687,8 +787,13 @@ function resolveTickerOrName(raw){
   if(!cleaned) return {ticker: null};
   const known = KNOWN_NAME_TO_TICKER[normalizeForMatch(cleaned)];
   if(known) return {ticker: known};
-  const looksLikeTicker = /^[A-Z0-9]{1,10}(\.[A-Z]{1,3})?$/.test(cleaned) || /\d/.test(cleaned) || cleaned.includes('.');
-  return looksLikeTicker ? {ticker: cleaned.toUpperCase()} : {ticker: null};
+  // Sécurité des données : on réutilise isValidTickerFormat (même règle
+  // qu'à l'ajout manuel d'une seule valeur) plutôt que l'ancienne condition
+  // "contient un chiffre OU un point", beaucoup trop permissive — elle
+  // acceptait n'importe quel texte collé dès qu'il contenait un seul chiffre
+  // ou un point, caractères dangereux (guillemets, chevrons...) compris.
+  const upper = cleaned.toUpperCase();
+  return isValidTickerFormat(upper) ? {ticker: upper} : {ticker: null};
 }
 
 function loadHistoriqueStore(){
@@ -741,6 +846,26 @@ function frDate(iso){
 // calculée en UTC pur pour éviter tout décalage lié au fuseau horaire local.
 function daysBetweenIso(a, b){
   return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000);
+}
+
+// Échappement HTML — Sécurité des données : tout ce qui est affiché dans
+// l'interface et provient d'une saisie libre (nom affiché d'une valeur,
+// ticker si jamais il contenait des caractères inattendus) ou d'une source
+// externe non garantie (nom/secteur renvoyés par le profil entreprise
+// FMP/Yahoo côté backend) passe par cette fonction avant insertion dans le
+// HTML, pour qu'un texte contenant par erreur des caractères type <, >, "
+// ou ' ne puisse jamais être interprété comme du code ou casser la mise en
+// page — tout reste strictement local au navigateur (rien n'est exécuté
+// côté serveur), mais ce genre d'échappement est une bonne pratique
+// standard dès qu'on insère du texte variable dans une page.
+function escapeHtml(str){
+  if(str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function isoDate(d){ return d.toISOString().slice(0,10); }
@@ -798,7 +923,22 @@ function importAllData(jsonText){
   }
   existingKeys.forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
   importKeys.forEach(k => { try{ localStorage.setItem(k, data[k]); }catch(e){} });
-  return { ok:true, count: importKeys.length };
+  // Sécurité des données : même si ce fichier est censé provenir d'un export
+  // de ce widget (donc a priori de confiance), on revalide la liste des
+  // tickers importés avec la même règle qu'à la saisie manuelle — un fichier
+  // modifié à la main (ou corrompu) ne doit pas pouvoir réintroduire, via la
+  // liste des valeurs suivies, un ticker contenant des caractères qui
+  // casseraient l'affichage.
+  let rejectedTickers = 0;
+  try{
+    const importedTickers = JSON.parse(localStorage.getItem('stockAdvice.tickers') || '[]');
+    if(Array.isArray(importedTickers)){
+      const safeTickers = importedTickers.filter(t => typeof t === 'string' && isValidTickerFormat(t));
+      rejectedTickers = importedTickers.length - safeTickers.length;
+      if(rejectedTickers > 0) localStorage.setItem('stockAdvice.tickers', JSON.stringify(safeTickers));
+    }
+  }catch(e){ /* pas de liste de tickers dans l'export, rien à filtrer */ }
+  return { ok:true, count: importKeys.length, rejectedTickers };
 }
 
 // Calcule, pour chaque période, la variation % et les plus haut/bas à
@@ -1059,7 +1199,7 @@ function dailyUpdateRows(){
   return state.tickers.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
-    const nom = loadNomManuel()[t] || (raw && raw.nom) || '';
+    const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || '');
     return `<tr data-ticker="${t}">
       <td>${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.72rem;">${t}</span></td>
       <td><input type="text" class="dailyPasteInput" data-ticker="${t}" placeholder="Coller la ligne ici" style="width:170px; font-family:monospace; font-size:.74rem;"></td>
@@ -1205,7 +1345,7 @@ function weeklyUpdateBlocks(){
   return state.tickers.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
-    const nom = loadNomManuel()[t] || (raw && raw.nom) || '';
+    const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || '');
     const cell = (cls, step, i) => `<td><input type="number" ${step ? `step="${step}"` : ''} class="${cls}" data-ticker="${t}" data-col="${i}" style="width:78px;"></td>`;
     return `<div class="weekly-block" data-ticker="${t}" style="margin-bottom:16px; padding-bottom:12px; border-bottom:1px dashed var(--border);">
       <div style="font-weight:600; margin-bottom:4px;">${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.78rem; font-weight:400;">${t}</span></div>
@@ -1312,8 +1452,8 @@ function historiqueBox(ticker, currentClose){
   const todayStr = isoDate(new Date());
 
   const sourceRow = `<div class="hist-source">
-      <input type="url" class="histSourceInput" data-ticker="${ticker}" placeholder="Lien de la fiche (ex. Boursorama) pour ${ticker}" value="${sourceUrl}">
-      ${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener">Voir la fiche ↗</a>` : ''}
+      <input type="url" class="histSourceInput" data-ticker="${ticker}" placeholder="Lien de la fiche (ex. Boursorama) pour ${ticker}" value="${escapeHtml(sourceUrl)}">
+      ${sourceUrl && isHttpUrl(sourceUrl) ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Voir la fiche ↗</a>` : (sourceUrl ? `<span class="hist-hint" title="Ce lien ne commence pas par http(s):// et n'est donc pas affiché comme cliquable.">⚠ lien non reconnu</span>` : '')}
     </div>`;
 
   const seanceFields = `
@@ -1438,7 +1578,7 @@ function fmtPrix(n){
 function currencySymbol(devise){ return devise==='EUR' ? '€' : (devise==='USD' ? '$' : (devise||'')); }
 
 function cardSkeleton(ticker){
-  const nomManuel = loadNomManuel()[ticker];
+  const nomManuel = escapeHtml(loadNomManuel()[ticker]);
   return `<div class="card" data-ticker="${ticker}">
     <div class="head"><div><div class="title">${nomManuel || ticker}</div><div class="subtitle">${nomManuel ? ticker + ' · ' : ''}Chargement…</div></div>
     <button class="remove" onclick="removeTicker('${ticker}')">✕</button></div>
@@ -1455,7 +1595,7 @@ function cardContent(ticker, d, alertMsgs){
     // qui a chargé normalement. Le bouton « Réessayer » continue de retenter
     // l'API en tâche de fond, sans effacer ce que vous avez saisi.
     const deviseGuess = currencySymbol(guessDevise(ticker));
-    const nomManuel = loadNomManuel()[ticker];
+    const nomManuel = escapeHtml(loadNomManuel()[ticker]);
     const manualSeance = getManualLatestSeance(ticker);
     const cours = manualSeance ? manualSeance.clo : null;
     const todayStr0 = isoDate(new Date());
@@ -1472,12 +1612,14 @@ function cardContent(ticker, d, alertMsgs){
     const objectifLine = hasObjManuel
       ? `<div class="kv"><span>Objectif 3 mois (saisi${objDate0 ? ' au ' + frDate(objDate0) : ''}) : <b>${fmtPrix(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
       : '';
+    const marcheGuess0 = guessMarche(ticker);
     return `<div class="card" data-ticker="${ticker}">
       <div class="head"><div>
           <div class="title">${nomManuel || ticker}</div>
-          ${nomManuel ? `<div class="subtitle">${ticker}</div>` : ''}
+          <div class="subtitle">${nomManuel ? ticker + ' · ' : ''}<span title="Marché déduit automatiquement du ticker — à vérifier, le backend ne le fournit pas">${marcheGuess0}</span></div>
         </div>
         <div style="display:flex; gap:6px; align-items:center;">
+          <label class="remove" style="cursor:pointer;" title="Sélectionner pour comparer / analyser"><input type="checkbox" class="compareCheckbox" data-ticker="${ticker}" style="vertical-align:middle;"></label>
           <button class="remove" onclick="renameTicker('${ticker}')" title="Saisir/modifier le nom affiché">✏️</button>
           <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
           <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
@@ -1485,7 +1627,7 @@ function cardContent(ticker, d, alertMsgs){
       </div>
       ${priceLine}
       ${objectifLine}
-      <div class="error">${d.error.message || 'Erreur inconnue.'}
+      <div class="error">${escapeHtml(d.error.message) || 'Erreur inconnue.'}
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
       <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : nom, lien vers la fiche, séances, objectif de cours, consensus, éligibilité PEA et dividendes.</p>
@@ -1500,12 +1642,20 @@ function cardContent(ticker, d, alertMsgs){
     `fondamental ${fmt(d.scoring.fondamental,1)}, sentiment ${fmt(d.scoring.sentiment,1)}) · RSI ${fmt(d.technique.rsi14,1)} · `+
     `${d.sentiment.tonalite_actualites} · consensus ${d.sentiment.consensus_analystes||'n/a'}.`;
   const alertsHtml = (alertMsgs && alertMsgs.length)
-    ? alertMsgs.map(a=>`<div class="alertbox">${a.message}</div>`).join('')
+    ? alertMsgs.map(a=>`<div class="alertbox">${escapeHtml(a.message)}</div>`).join('')
     : '';
   const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
   const devise = currencySymbol(d.devise);
-  const nomManuel = loadNomManuel()[ticker];
+  const nomManuel = escapeHtml(loadNomManuel()[ticker]);
   const costBasis = loadCostBasis()[ticker];
+  // Secteur : renvoyé par le backend (profil entreprise FMP/Yahoo), affiché
+  // tel quel quand disponible — pas de saisie manuelle, c'est de la donnée
+  // récupérée automatiquement. Marché : deviné côté widget (voir guessMarche
+  // ci-dessus), le backend ne renvoyant pas ce champ ; toujours affiché, en
+  // mentionnant que c'est une déduction. escapeHtml() par précaution (texte
+  // libre renvoyé par la source de données externe FMP/Yahoo).
+  const secteurAffiche = d.secteur ? escapeHtml(d.secteur) : null;
+  const marcheAffiche = guessMarche(ticker);
   // Le cours affiché privilégie TOUJOURS votre dernière séance saisie
   // manuellement quand elle existe (voir la discussion sur la fiabilité des
   // sources gratuites, Yahoo/Stooq pouvant afficher un cours vieux de
@@ -1539,7 +1689,7 @@ function cardContent(ticker, d, alertMsgs){
   const potentielPct = (objectifRetenu !== null && objectifRetenu !== undefined && cours)
     ? ((objectifRetenu - cours) / cours) * 100 : null;
   const objectifNonFiable = (!hasObjManuel && d.objectif_3_mois && d.objectif_3_mois.fiable === false)
-    ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">${d.objectif_3_mois.avertissement}</div>` : '';
+    ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">${escapeHtml(d.objectif_3_mois.avertissement)}</div>` : '';
   const priceDateIso = manualSeance ? manualSeance.date : (d.seance.date || null);
   let priceFreshnessNote;
   if(manualSeance){
@@ -1580,8 +1730,9 @@ function cardContent(ticker, d, alertMsgs){
   }
   return `<div class="card" data-ticker="${ticker}">
     <div class="head">
-      <div><div class="title">${nomManuel || d.nom || ticker}</div><div class="subtitle">${ticker}</div></div>
+      <div><div class="title">${nomManuel || escapeHtml(d.nom) || ticker}</div><div class="subtitle">${ticker}${secteurAffiche ? ' · ' + secteurAffiche : ''} · <span title="Marché déduit automatiquement du ticker — à vérifier, le backend ne le fournit pas">${marcheAffiche}</span></div></div>
       <div style="display:flex; gap:6px; align-items:center;">
+        <label class="remove" style="cursor:pointer;" title="Sélectionner pour comparer / analyser"><input type="checkbox" class="compareCheckbox" data-ticker="${ticker}" style="vertical-align:middle;"></label>
         <button class="remove" onclick="renameTicker('${ticker}')" title="Saisir/modifier le nom affiché">✏️</button>
         <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
         <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
@@ -1592,7 +1743,7 @@ function cardContent(ticker, d, alertMsgs){
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
-      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
+      <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+escapeHtml(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
     ${analysteBox(ticker, devise)}
     ${peaBox(ticker, d.eligibilite_pea)}
@@ -1612,17 +1763,77 @@ function grid_el_contains_input(el){
   return grid && grid.contains(el) && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
 }
 
+// Performance quotidienne/hebdomadaire d'une valeur, pour le tri — calculée
+// EXACTEMENT comme ce qui est déjà affiché sur la fiche elle-même (même
+// priorité séance manuelle > donnée API pour le quotidien, même variation
+// "1 semaine" de computeVariations utilisée par le bloc historique), pour
+// que l'ordre corresponde toujours à ce que vous voyez sur les cartes.
+function getSortMetrics(ticker){
+  const entry = state.data[ticker];
+  const d = entry && entry.data && !entry.data.error ? entry.data : null;
+  const manualSeance = getManualLatestSeance(ticker);
+  const todayStr = isoDate(new Date());
+  let cours = null, dailyVarPct = null;
+  if(d){
+    cours = manualSeance ? manualSeance.clo : d.seance.close;
+    dailyVarPct = (manualSeance && manualSeance.date === todayStr && manualSeance.var_pct !== undefined)
+      ? manualSeance.var_pct
+      : (!manualSeance && d.seance && d.seance.variation_jour_pct !== undefined && d.seance.variation_jour_pct !== null)
+        ? d.seance.variation_jour_pct
+        : null;
+  } else {
+    cours = manualSeance ? manualSeance.clo : null;
+    dailyVarPct = (manualSeance && manualSeance.date === todayStr && manualSeance.var_pct !== undefined) ? manualSeance.var_pct : null;
+  }
+  const variations = computeVariations(ticker, cours);
+  const weekly = variations ? variations.find(v => v.key === '1sem') : null;
+  const weeklyVarPct = (weekly && weekly.var_pct !== undefined && weekly.var_pct !== null) ? weekly.var_pct : null;
+  return { dailyVarPct, weeklyVarPct };
+}
+
+// Ordre d'affichage des cartes selon le tri choisi (state.sortMode) :
+// alphabétique par défaut, sinon par performance quotidienne/hebdomadaire
+// (meilleure ou pire d'abord). Les valeurs sans la donnée demandée (pas
+// encore de séance saisie/chargée, ou pas d'historique "1 semaine") sont
+// toujours reléguées en fin de liste plutôt que de fausser le tri avec 0.
+function sortedTickers(){
+  const mode = state.sortMode || 'alpha';
+  const list = state.tickers.slice();
+  if(mode === 'alpha') return list.sort((a,b) => a.localeCompare(b));
+  const metricKey = mode.startsWith('daily') ? 'dailyVarPct' : 'weeklyVarPct';
+  const desc = mode.endsWith('_desc');
+  const metrics = {};
+  list.forEach(t => { metrics[t] = getSortMetrics(t)[metricKey]; });
+  return list.sort((a,b) => {
+    const va = metrics[a], vb = metrics[b];
+    const aNull = (va === null || va === undefined || isNaN(va));
+    const bNull = (vb === null || vb === undefined || isNaN(vb));
+    if(aNull && bNull) return a.localeCompare(b);
+    if(aNull) return 1;
+    if(bNull) return -1;
+    return desc ? (vb - va) : (va - vb);
+  });
+}
+
 function render(){
   // Évite de reconstruire la grille (et donc de couper la saisie en cours)
   // si vous êtes en train de taper un prix de revient au moment où un
   // rafraîchissement automatique se déclenche.
   if(document.activeElement && grid_el_contains_input(document.activeElement)) return;
   const grid = document.getElementById('grid');
-  grid.innerHTML = state.tickers.map(t => {
+  const order = sortedTickers();
+  grid.innerHTML = order.map(t => {
     const entry = state.data[t];
     if(!entry) return cardSkeleton(t);
     return cardContent(t, entry.data || {error: entry.error}, entry.alerts);
   }).join('') || '<p style="color:var(--ink-muted)">Ajoutez une action pour commencer.</p>';
+  // Réapplique les cases "comparer" cochées (perdues à chaque reconstruction
+  // du HTML) et met à jour la barre de comparaison/analyse.
+  state.compareSelected.forEach(t => {
+    const cb = grid.querySelector(`.compareCheckbox[data-ticker="${t}"]`);
+    if(cb) cb.checked = true;
+  });
+  updateCompareBar();
 }
 
 async function loadTicker(ticker){
@@ -1649,6 +1860,7 @@ async function loadTicker(ticker){
 function removeTicker(ticker){
   state.tickers = state.tickers.filter(t => t !== ticker);
   delete state.data[ticker];
+  state.compareSelected.delete(ticker);
   persistTickers();
   render();
   refreshDailyUpdateTableIfOpen();
@@ -1662,8 +1874,15 @@ function refreshAll(){
 
 document.getElementById('addBtn').addEventListener('click', () => {
   const input = document.getElementById('tickerInput');
+  const errorEl = document.getElementById('tickerInputError');
   const ticker = input.value.trim().toUpperCase();
+  errorEl.style.display = 'none';
   if(!ticker || state.tickers.includes(ticker)) return;
+  if(!isValidTickerFormat(ticker)){
+    errorEl.textContent = `« ${ticker} » n'est pas un format de ticker valide (lettres, chiffres, point et tiret uniquement, 12 caractères max.) — ex. MC.PA, AAPL.`;
+    errorEl.style.display = 'block';
+    return;
+  }
   state.tickers.push(ticker);
   input.value = '';
   persistTickers();
@@ -1861,6 +2080,147 @@ document.getElementById('globalVerifCopyBtn').addEventListener('click', async ()
     fallback.focus();
     fallback.select();
   }
+});
+
+// ============ Sélection multiple : comparer / analyser plusieurs valeurs ============
+// Chaque fiche porte une case à cocher (.compareCheckbox). La sélection
+// (state.compareSelected) est volontairement conservée en mémoire seulement
+// (pas persistée sur disque) : c'est un choix ponctuel pour une comparaison,
+// pas une préférence durable comme la liste des valeurs suivies.
+function updateCompareBar(){
+  const bar = document.getElementById('compareBar');
+  const count = state.compareSelected.size;
+  if(count === 0){
+    bar.style.display = 'none';
+    document.getElementById('compareResult').innerHTML = '';
+    return;
+  }
+  bar.style.display = 'block';
+  document.getElementById('compareBarCount').textContent = `${count} valeur${count>1?'s':''} sélectionnée${count>1?'s':''}`;
+}
+
+function buildCompareTableHtml(tickers){
+  if(!tickers.length) return '<p class="hist-hint">Sélectionnez au moins une valeur avec la case à cocher sur chaque fiche.</p>';
+  const rows = tickers.map(t => {
+    const entry = state.data[t];
+    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+    const manualSeance = getManualLatestSeance(t);
+    const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || t);
+    const deviseTxt = raw ? currencySymbol(raw.devise) : currencySymbol(guessDevise(t));
+    const cours = manualSeance ? manualSeance.clo : (raw && raw.seance ? raw.seance.close : null);
+    const secteurTxt = (raw && raw.secteur) ? escapeHtml(raw.secteur) : '—';
+    const marcheTxt = guessMarche(t);
+    const metrics = getSortMetrics(t);
+    const consManuel = loadConsensusManuel()[t];
+    const tier = consensusTier(consManuel);
+    const objManuel = loadObjectifManuel()[t];
+    const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
+    const objectifRetenu = hasObjManuel ? objManuel : (raw && raw.objectif_3_mois ? raw.objectif_3_mois.retenu : null);
+    const potentielPct = (objectifRetenu !== null && objectifRetenu !== undefined && cours) ? ((objectifRetenu - cours) / cours) * 100 : null;
+    return `<tr>
+      <td><b>${t}</b>${nom && nom !== t ? '<br><span style="color:var(--ink-muted);">'+nom+'</span>' : ''}</td>
+      <td>${secteurTxt}</td>
+      <td>${marcheTxt}</td>
+      <td>${cours !== null && cours !== undefined ? fmtPrix(cours)+' '+deviseTxt : '—'}</td>
+      <td>${metrics.dailyVarPct !== null && metrics.dailyVarPct !== undefined ? pctSpan(metrics.dailyVarPct) : '—'}</td>
+      <td>${metrics.weeklyVarPct !== null && metrics.weeklyVarPct !== undefined ? pctSpan(metrics.weeklyVarPct) : '—'}</td>
+      <td>${raw && raw.conseil ? `<span class="badge ${raw.conseil}">${raw.conseil}</span>` : '—'}</td>
+      <td>${tier ? `<b style="color:${tier.color}">${tier.label}</b>` : '—'}</td>
+      <td>${objectifRetenu !== null && objectifRetenu !== undefined ? fmtPrix(objectifRetenu)+' '+deviseTxt + (potentielPct!==null && potentielPct!==undefined ? ' ('+pctSpan(potentielPct)+')':'') : '—'}</td>
+      <td>${raw && raw.niveau_risque !== undefined ? raw.niveau_risque+'/10' : '—'}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="overflow-x:auto;"><table class="compare-table">
+    <thead><tr><th>Valeur</th><th>Secteur</th><th>Marché</th><th>Cours</th><th>Perf. jour</th><th>Perf. 1 sem.</th><th>Conseil</th><th>Consensus</th><th>Objectif 3 mois</th><th>Risque</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+// Prompt "Analyse" : le widget n'a pas de backend IA (pas de recherche web ni
+// d'appel à un modèle de langage côté serveur — voir le texte d'accueil de
+// l'app), donc ce bouton suit le même principe que « Copier pour vérification
+// Boursorama » : il prépare un texte prêt à coller dans une conversation avec
+// Claude (ou un autre assistant disposant d'un accès internet), avec des
+// consignes explicites de fraîcheur des informations (le widget ne peut pas
+// garantir lui-même la validité des données — c'est l'assistant, via sa
+// recherche web, qui doit vérifier et dater ses sources).
+function buildAnalysePrompt(tickers){
+  const lines = [
+    "Analyse comparative de plusieurs valeurs boursières (widget Conseil d'investissement) :",
+    '',
+    "Merci de rechercher sur le web les actualités et informations les plus récentes pour chacune des valeurs ci-dessous (vérifie explicitement la date de chaque source et signale clairement toute information qui te semblerait ancienne, obsolète ou invérifiable plutôt que de la réutiliser comme si elle était à jour). Pour chaque valeur, donne un résumé synthétique de l'actualité récente et ton avis argumenté (acheter / conserver / vendre). Termine par une comparaison d'ensemble indiquant la valeur à privilégier parmi celles-ci, et pourquoi.",
+    '',
+    'Valeurs à analyser :',
+  ];
+  tickers.forEach(t => {
+    const entry = state.data[t];
+    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+    const manualSeance = getManualLatestSeance(t);
+    const nom = loadNomManuel()[t] || (raw && raw.nom) || '';
+    const deviseTxt = raw && raw.devise ? raw.devise : guessDevise(t);
+    const cours = manualSeance ? manualSeance.clo : (raw && raw.seance ? raw.seance.close : null);
+    const secteurTxt = raw && raw.secteur ? raw.secteur : null;
+    const marcheTxt = guessMarche(t);
+    const consManuel = loadConsensusManuel()[t];
+    const tier = consensusTier(consManuel);
+    const metrics = getSortMetrics(t);
+    const parts = [`${t}${nom ? ' (' + nom + ')' : ''}`];
+    parts.push(`marché : ${marcheTxt}`);
+    if(secteurTxt) parts.push(`secteur : ${secteurTxt}`);
+    if(cours !== null && cours !== undefined) parts.push(`cours actuel : ${fmtPrix(cours)} ${deviseTxt}`);
+    if(raw && raw.conseil) parts.push(`conseil interne du widget : ${raw.conseil}`);
+    if(metrics.dailyVarPct !== null && metrics.dailyVarPct !== undefined) parts.push(`variation du jour : ${metrics.dailyVarPct>0?'+':''}${fmt(metrics.dailyVarPct,2)}%`);
+    if(metrics.weeklyVarPct !== null && metrics.weeklyVarPct !== undefined) parts.push(`variation sur 1 semaine : ${metrics.weeklyVarPct>0?'+':''}${fmt(metrics.weeklyVarPct,2)}%`);
+    if(tier) parts.push(`consensus analystes : ${fmt(consManuel,2)}/5 (${tier.label})`);
+    lines.push('- ' + parts.filter(Boolean).join(' — '));
+  });
+  lines.push('');
+  lines.push("Précise bien la date des actualités utilisées pour chaque valeur, et indique-le simplement si tu ne trouves rien de récent pour l'une d'entre elles plutôt que de réutiliser une information ancienne.");
+  return lines.join('\n');
+}
+
+document.getElementById('grid').addEventListener('change', e => {
+  const cb = e.target.closest('.compareCheckbox');
+  if(!cb) return;
+  const t = cb.dataset.ticker;
+  if(cb.checked) state.compareSelected.add(t); else state.compareSelected.delete(t);
+  updateCompareBar();
+});
+
+document.getElementById('compareBtn').addEventListener('click', () => {
+  const tickers = sortedTickers().filter(t => state.compareSelected.has(t));
+  document.getElementById('compareResult').innerHTML = buildCompareTableHtml(tickers);
+});
+
+document.getElementById('analyseBtn').addEventListener('click', async () => {
+  const tickers = sortedTickers().filter(t => state.compareSelected.has(t));
+  const resultDiv = document.getElementById('compareResult');
+  if(!tickers.length){
+    resultDiv.innerHTML = '<p class="hist-hint">Sélectionnez au moins une valeur avec la case à cocher sur chaque fiche.</p>';
+    return;
+  }
+  const text = buildAnalysePrompt(tickers);
+  try{
+    await navigator.clipboard.writeText(text);
+    resultDiv.innerHTML = `<p class="hist-hint">✅ Prompt d'analyse copié pour ${tickers.length} valeur${tickers.length>1?'s':''} — collez-le (Ctrl/Cmd+V) dans une conversation avec Claude (ou un autre assistant IA disposant d'un accès internet) pour obtenir la synthèse.</p>`;
+  }catch(e){
+    resultDiv.innerHTML = `<p class="hist-hint">⚠️ Copie automatique indisponible sur cet appareil — sélectionnez le texte ci-dessous (déjà sélectionné) et copiez-le à la main :</p><textarea class="hist-paste" readonly style="min-height:160px;"></textarea>`;
+    const ta = resultDiv.querySelector('textarea');
+    ta.value = text;
+    ta.focus();
+    ta.select();
+  }
+});
+
+document.getElementById('compareClearBtn').addEventListener('click', () => {
+  state.compareSelected.clear();
+  render();
+});
+
+document.getElementById('sortSelect').addEventListener('change', () => {
+  state.sortMode = document.getElementById('sortSelect').value;
+  persistSortMode();
+  render();
 });
 
 document.getElementById('exportDataBtn').addEventListener('click', () => {
@@ -2190,6 +2550,7 @@ document.getElementById('grid').addEventListener('input', e => {
 });
 
 loadPersisted();
+document.getElementById('sortSelect').value = state.sortMode;
 checkHealth();
 render();
 // Mise à jour une seule fois à l'ouverture de la page, puis plus aucun appel
