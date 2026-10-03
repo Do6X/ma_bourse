@@ -167,6 +167,16 @@
     </div>
 
     <div style="margin-bottom:14px; padding-top:12px; border-top:1px solid var(--border);">
+      <label style="display:block; margin-bottom:6px; font-weight:600;">Récupérer l'historique des objectifs depuis une ancienne sauvegarde</label>
+      <p class="hist-hint">Si vous avez un ancien fichier exporté avant la mise en place de l'historique des objectifs de cours, vous pouvez le ré-importer ici pour en récupérer les anciennes valeurs datées — contrairement à l'import ci-dessus, <b>rien n'est remplacé</b> : seul l'historique est complété, vos données actuelles restent intactes.</p>
+      <div class="hist-paste-row" style="margin-top:0;">
+        <button id="importObjectifHistoriqueBtn" type="button">📜 Importer un ancien fichier</button>
+        <input id="importObjectifHistoriqueFile" type="file" accept="application/json,.json" style="display:none;">
+      </div>
+      <div id="importObjectifHistoriqueResult" class="hist-hint" style="margin-top:-6px;"></div>
+    </div>
+
+    <div style="margin-bottom:14px; padding-top:12px; border-top:1px solid var(--border);">
       <button class="hist-toggle" id="dailyUpdateToggle" type="button">📋 Mise à jour quotidienne des cours (tableau groupé)<span class="chevron">›</span></button>
       <div id="dailyUpdatePanel" hidden style="margin-top:8px;">
         <p class="hist-hint">Pour chaque valeur, collez directement dans la case « Coller ici » la ligne correspondante copiée depuis la cote générale Boursorama (colonnes Dernier, Var., Ouv., +Haut, +Bas, Var. depuis le 1er janvier, Volume, séparées par des tabulations) — les colonnes se remplissent automatiquement dès le collage (le « (c) » à côté du cours de clôture est retiré automatiquement), corrigez si besoin, puis cliquez sur « Enregistrer tout » en bas du tableau. La date retenue est celle d'aujourd'hui pour toutes les valeurs.</p>
@@ -324,9 +334,50 @@ function saveCostBasis(ticker, value){
 function loadObjectifManuel(){
   try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuel') || '{}'); }catch(e){ return {}; }
 }
+// Historique des anciens objectifs de cours (3 mois) saisis à la main :
+// chaque fois qu'une valeur en remplace une autre (ou est effacée), l'ancienne
+// est archivée ici avec la date qu'elle affichait (celle de objectifManuelDate
+// au moment du remplacement) avant d'être perdue — utile pour juger après
+// coup de la fiabilité de ces objectifs dans le temps (voir échange avec
+// l'utilisateur sur l'intérêt de conserver cet historique).
+function loadObjectifManuelHistorique(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuelHistorique') || '{}'); }catch(e){ return {}; }
+}
+function addObjectifManuelHistorique(ticker, value, date){
+  if(value===null || value===undefined || isNaN(value)) return;
+  const store = loadObjectifManuelHistorique();
+  const list = store[ticker] || [];
+  // Évite d'archiver deux fois exactement la même valeur à la même date
+  // (ex. si l'utilisateur ressaisit la même valeur par erreur).
+  if(list.some(h => h.value === value && h.date === (date || null))) return;
+  list.push({ value, date: date || null });
+  list.sort((a, b) => (a.date || '') < (b.date || '') ? -1 : ((a.date || '') > (b.date || '') ? 1 : 0));
+  store[ticker] = list;
+  try{ localStorage.setItem('stockAdvice.objectifManuelHistorique', JSON.stringify(store)); }catch(e){}
+}
+function removeObjectifManuelHistorique(ticker, index){
+  const store = loadObjectifManuelHistorique();
+  const list = store[ticker] || [];
+  list.splice(index, 1);
+  if(list.length) store[ticker] = list; else delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.objectifManuelHistorique', JSON.stringify(store)); }catch(e){}
+}
+// Important : l'archivage ci-dessous suppose l'ordre de saisie habituel de
+// l'interface (champ valeur avant champ date) — quand vous reportez un
+// nouvel objectif, saisissez d'abord la NOUVELLE valeur, puis mettez à jour
+// sa date juste après. Si la date est modifiée AVANT la valeur, l'ancienne
+// date aura déjà été écrasée au moment où la valeur change, et l'entrée
+// archivée portera alors la nouvelle date plutôt que l'ancienne.
 function saveObjectifManuel(ticker, value){
   const store = loadObjectifManuel();
-  if(value===null || value===undefined || isNaN(value)) delete store[ticker];
+  const oldValue = store[ticker];
+  const hasOld = (oldValue !== undefined && oldValue !== null && !isNaN(oldValue));
+  const newIsValid = !(value===null || value===undefined || isNaN(value));
+  const changed = hasOld && (!newIsValid || Number(value) !== Number(oldValue));
+  if(changed){
+    addObjectifManuelHistorique(ticker, oldValue, loadObjectifManuelDate()[ticker] || null);
+  }
+  if(!newIsValid) delete store[ticker];
   else store[ticker] = value;
   try{ localStorage.setItem('stockAdvice.objectifManuel', JSON.stringify(store)); }catch(e){}
 }
@@ -552,9 +603,20 @@ function analysteBox(ticker, devise){
       <input type="date" class="consensusManuelDateInput" data-ticker="${ticker}" value="${consDate || ''}" title="Date du consensus telle qu'affichée sur la fiche source (ex. « au 18/08/26 » sur Boursorama)">
     </div>
     ${(objDate || consDate) ? `<div class="hist-hint" style="margin:0 0 2px;">${objDate ? 'Objectif au ' + frDate(objDate) : ''}${(objDate && consDate) ? ' · ' : ''}${consDate ? 'Consensus au ' + frDate(consDate) : ''}</div>` : ''}
+    ${objectifHistoriqueHtml(ticker, devise)}
     ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle (note moyenne) : [1-2[ Acheter · [2-3[ Renforcer · [3-4[ Conserver · [4-5[ Alléger · [5-6[ Vendre</div>${gauge}` : ''}
     ${autresObjectifsHtml(ticker, devise)}
   </div>`;
+}
+
+// Historique discret des anciens objectifs de cours (3 mois) saisis à la
+// main — affiché juste sous le champ actuel, avec un bouton pour retirer une
+// entrée archivée par erreur (ex. simple correction de faute de frappe).
+function objectifHistoriqueHtml(ticker, devise){
+  const list = loadObjectifManuelHistorique()[ticker] || [];
+  if(!list.length) return '';
+  const items = list.map((h, i) => `<span style="white-space:nowrap;">${h.date ? frDate(h.date) : '(date inconnue)'} : <b>${fmtPrix(h.value)} ${devise}</b> <button class="hist-reset" data-action="remove-objectif-manuel-historique" data-ticker="${ticker}" data-index="${i}" style="margin:0; padding:0 4px;" title="Retirer cette entrée de l'historique">✕</button></span>`).join(' · ');
+  return `<div class="hist-hint" style="margin:0 0 2px;">Historique des objectifs : ${items}</div>`;
 }
 
 // Nom affiché de la valeur : le backend devine un nom pour la plupart des
@@ -1199,6 +1261,40 @@ function importAllData(jsonText){
     }
   }catch(e){ /* pas de liste de tickers dans l'export, rien à filtrer */ }
   return { ok:true, count: importKeys.length, rejectedTickers };
+}
+
+// Récupère, depuis une ANCIENNE sauvegarde (export .json généré par ce
+// widget), les objectifs de cours (3 mois) qu'elle contient pour les ajouter
+// à l'historique (voir objectifManuelHistorique) — contrairement à
+// importAllData ci-dessus, ceci FUSIONNE sans rien remplacer : la valeur et
+// la date actuellement actives sur cet appareil ne sont jamais touchées,
+// seul l'historique est complété. Un objectif sans date dans la sauvegarde
+// est ignoré plutôt que daté arbitrairement (on ne peut pas savoir depuis
+// quand il était valable).
+function importObjectifHistoriqueFromBackup(jsonText){
+  let parsed;
+  try{ parsed = JSON.parse(jsonText); }
+  catch(e){ return { ok:false, error: "Fichier JSON invalide (pas un export valide)." }; }
+  const data = parsed && parsed.data;
+  if(!data || typeof data !== 'object') return { ok:false, error: "Format de fichier non reconnu (attendu : un export généré par ce widget)." };
+  let objectifs = {}, dates = {};
+  try{ objectifs = JSON.parse(data['stockAdvice.objectifManuel'] || '{}'); }catch(e){}
+  try{ dates = JSON.parse(data['stockAdvice.objectifManuelDate'] || '{}'); }catch(e){}
+  if(!objectifs || typeof objectifs !== 'object' || !Object.keys(objectifs).length){
+    return { ok:false, error: "Aucun objectif de cours trouvé dans ce fichier." };
+  }
+  const added = [], skipped = [];
+  Object.keys(objectifs).forEach(ticker => {
+    const value = objectifs[ticker];
+    const date = dates[ticker];
+    if(typeof value !== 'number' || isNaN(value)) return;
+    if(!date){ skipped.push(ticker); return; }
+    const before = (loadObjectifManuelHistorique()[ticker] || []).length;
+    addObjectifManuelHistorique(ticker, value, date);
+    const after = (loadObjectifManuelHistorique()[ticker] || []).length;
+    if(after > before) added.push(ticker);
+  });
+  return { ok:true, added, skipped };
 }
 
 // Calcule, pour chaque période, la variation % et les plus haut/bas à
@@ -2541,6 +2637,31 @@ document.getElementById('importDataFile').addEventListener('change', e => {
   e.target.value = '';
 });
 
+document.getElementById('importObjectifHistoriqueBtn').addEventListener('click', () => {
+  document.getElementById('importObjectifHistoriqueFile').click();
+});
+
+document.getElementById('importObjectifHistoriqueFile').addEventListener('change', e => {
+  const file = e.target.files && e.target.files[0];
+  const resultEl = document.getElementById('importObjectifHistoriqueResult');
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = importObjectifHistoriqueFromBackup(String(reader.result));
+    if(result.ok){
+      const addedTxt = result.added.length ? `${result.added.length} objectif(s) ajouté(s) à l'historique (${result.added.join(', ')})` : "Aucun nouvel objectif ajouté (déjà présents dans l'historique, ou aucune date exploitable)";
+      const skippedTxt = result.skipped.length ? ` · ${result.skipped.length} valeur(s) ignorée(s) faute de date connue dans le fichier (${result.skipped.join(', ')})` : '';
+      resultEl.textContent = `✅ ${addedTxt}${skippedTxt}.`;
+      render();
+    } else {
+      resultEl.textContent = `❌ ${result.error}`;
+    }
+  };
+  reader.onerror = () => { resultEl.textContent = '❌ Impossible de lire ce fichier.'; };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
 document.getElementById('grid').addEventListener('click', async e => {
   const btn = e.target.closest('[data-action="copy-verif"]');
   if(!btn) return;
@@ -2800,6 +2921,12 @@ document.getElementById('grid').addEventListener('click', e => {
   const rmObjBtn = e.target.closest('[data-action="remove-objectif-analyste"]');
   if(rmObjBtn){
     removeObjectifAnalyste(rmObjBtn.dataset.ticker, Number(rmObjBtn.dataset.index));
+    render();
+    return;
+  }
+  const rmObjHistBtn = e.target.closest('[data-action="remove-objectif-manuel-historique"]');
+  if(rmObjHistBtn){
+    removeObjectifManuelHistorique(rmObjHistBtn.dataset.ticker, Number(rmObjHistBtn.dataset.index));
     render();
     return;
   }
