@@ -11,44 +11,64 @@
 <meta name="theme-color" content="#f2f3ee">
 <style>
   :root{
-    --bg:#f2f3ee; --surface:#fff; --surface-2:#e7e9e0; --border:#d4d7cc;
-    --ink:#171a15; --ink-2:#4a4f42; --ink-muted:#7c8172;
-    --accent:#2f5d73; --accent-soft:#dbe6e8;
-    --good:#3f8f5f; --good-soft:#dff0e4;
-    --warn:#5b5f52; --warn-soft:#e4e6dc;
-    --bad:#b1503f; --bad-soft:#f7e0d9;
+    /* Palette neutre + bleu système, dans l'esprit macOS/iOS (fond gris très
+       clair type "systemGray6", cartes blanches, bleu "systemBlue" comme
+       seule couleur d'accent — plutôt que la palette verte précédente). */
+    --bg:#f5f5f7; --surface:#fff; --surface-2:#f0f0f2; --border:#e3e3e6;
+    --ink:#1d1d1f; --ink-2:#48484a; --ink-muted:#86868b;
+    --accent:#0071e3; --accent-soft:#e8f1fc;
+    --good:#1e8e3e; --good-soft:#e6f4ea;
+    --warn:#b06a00; --warn-soft:#fbead0;
+    --bad:#d93025; --bad-soft:#fbe4e1;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.05);
+    --shadow-md:0 1px 2px rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.06);
+    --radius-lg:14px; --radius-md:10px; --radius-sm:7px;
     /* Échelle des recommandations (consensus analystes, note 1 à 5) : un
        dégradé à 5 teintes distinctes, du vert foncé (Acheter) au rouge
        (Vendre), demandé explicitement plutôt que les 3 couleurs good/warn/bad
        réutilisées précédemment (qui confondaient Acheter/Renforcer d'une
        part et Alléger/Vendre d'autre part). */
     --tier-acheter:#1f6e3c; --tier-acheter-soft:#dcefe2;
-    --tier-renforcer:#6fb876; --tier-renforcer-soft:#e7f5e5;
-    --tier-conserver:#c9a227; --tier-conserver-soft:#f6eeda;
-    --tier-alleger:#d9822b; --tier-alleger-soft:#f8e6d3;
-    --tier-vendre:#b1503f; --tier-vendre-soft:#f7e0d9;
+    --tier-renforcer:#4f9e59; --tier-renforcer-soft:#e7f5e5;
+    --tier-conserver:#b8860b; --tier-conserver-soft:#f6eeda;
+    --tier-alleger:#c1690a; --tier-alleger-soft:#f8e6d3;
+    --tier-vendre:#d93025; --tier-vendre-soft:#fbe4e1;
   }
   *{box-sizing:border-box;}
-  body{font-family:ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--ink); margin:0; padding:24px 16px 60px;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",ui-sans-serif,system-ui,"Helvetica Neue",Arial,sans-serif; -webkit-font-smoothing:antialiased; background:var(--bg); color:var(--ink); margin:0; padding:28px 16px 60px; letter-spacing:-.003em;}
   .wrap{max-width:920px; margin:0 auto;}
-  h1{font-size:1.4rem; margin:0 0 4px;}
-  .sub{color:var(--ink-2); font-size:.9rem; margin:0 0 18px;}
-  .config{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:18px; font-size:.85rem;}
+  h1{font-size:1.5rem; font-weight:600; letter-spacing:-.015em; margin:0 0 4px;}
+  .sub{color:var(--ink-2); font-size:.88rem; margin:0 0 16px; line-height:1.45;}
+  .config{background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow-sm); border-radius:var(--radius-lg); padding:14px 16px; margin-bottom:14px; font-size:.85rem;}
   .config code{background:var(--surface-2); padding:2px 5px; border-radius:4px;}
   .status{display:inline-flex; align-items:center; gap:6px; font-size:.8rem; margin-left:10px;}
   .dot{width:8px; height:8px; border-radius:50%; background:var(--ink-muted);}
   .dot.ok{background:var(--good);} .dot.err{background:var(--bad);}
-  .addrow{display:flex; gap:8px; margin-bottom:20px;}
-  .addrow input{flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:.95rem;}
-  .addrow button{padding:10px 16px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer;}
-  .addrow button:disabled{opacity:.5; cursor:default;}
-  .addrow select{padding:9px 10px; border:1px solid var(--border); border-radius:8px; font-size:.88rem; background:var(--surface); color:var(--ink);}
-  #compareBar button{padding:8px 14px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; font-size:.85rem;}
-  .compare-table{width:100%; border-collapse:collapse; font-size:.8rem; background:var(--surface); border-radius:8px; overflow:hidden;}
+  /* Boutons — deux familles, comme sur macOS/iOS : un bouton "plein" (bleu
+     système) pour l'action principale d'une zone, un bouton "discret" (fond
+     gris léger, sans bordure dure) pour les actions secondaires. */
+  .btn, .addrow button, #compareBar button, .hist-paste-row button{padding:9px 16px; border:none; border-radius:var(--radius-md); background:var(--accent); color:#fff; font-weight:600; font-size:.88rem; cursor:pointer; transition:opacity .15s ease; font-family:inherit;}
+  .btn:hover, .addrow button:hover, #compareBar button:hover, .hist-paste-row button:hover{opacity:.88;}
+  .btn:active, .addrow button:active, #compareBar button:active, .hist-paste-row button:active{opacity:.75;}
+  .btn-secondary{background:var(--surface-2); color:var(--ink);}
+  .addrow{display:flex; gap:8px; margin-bottom:16px;}
+  .addrow input{flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-md); font-size:.95rem; background:var(--surface);}
+  .addrow button:disabled{opacity:.45; cursor:default;}
+  .addrow select{padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-md); font-size:.88rem; background:var(--surface); color:var(--ink);}
+  #compareBar button{font-size:.85rem;}
+  /* Barre d'outils secondaire : boutons discrets qui affichent/masquent un
+     panneau (Réglages, Poser une question...) — toujours repliés par défaut
+     pour une interface plus sobre, le contenu détaillé n'apparaît qu'à la
+     demande. */
+  .toolbar-row{display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;}
+  .toolbar-row button{padding:9px 14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:.86rem; font-weight:600; cursor:pointer; transition:background .15s ease;}
+  .toolbar-row button:hover{background:var(--surface-2);}
+  .toolbar-row button[aria-expanded="true"]{background:var(--accent-soft); color:var(--accent); border-color:var(--accent-soft);}
+  .compare-table{width:100%; border-collapse:collapse; font-size:.8rem; background:var(--surface); border-radius:var(--radius-md); overflow:hidden;}
   .compare-table th, .compare-table td{padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);}
   .compare-table th{background:var(--surface-2); text-align:left;}
   .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px;}
-  .card{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; position:relative;}
+  .card{background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow-sm); border-radius:var(--radius-lg); padding:14px 16px; position:relative;}
   .card .head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
   /* Nom de la société mis en avant (gros, en gras) ; le code/ticker en
      dessous, en plus petit — l'inverse de l'ancien affichage, pour que la
@@ -80,7 +100,13 @@
   .hist-source{display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;}
   .hist-source input{flex:1; min-width:120px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; font-size:.78rem; font-family:inherit;}
   .hist-source a{font-size:.78rem; white-space:nowrap; color:var(--accent);}
-  .hist-toggle{background:var(--surface-2); border:none; border-radius:6px; padding:6px 10px; font-size:.78rem; cursor:pointer; color:var(--ink);}
+  /* Boutons "à tiroir" (disclosure) : rangée pleine largeur, icône + libellé
+     à gauche, chevron à droite qui pivote à l'ouverture — convention
+     macOS/iOS pour un contenu secondaire replié par défaut. */
+  .hist-toggle{display:flex; align-items:center; width:100%; gap:8px; background:var(--surface-2); border:none; border-radius:var(--radius-sm); padding:8px 12px; font-size:.82rem; font-weight:600; cursor:pointer; color:var(--ink); text-align:left; transition:background .15s ease;}
+  .hist-toggle:hover{background:var(--border);}
+  .hist-toggle .chevron{margin-left:auto; color:var(--ink-muted); font-size:.8rem; transition:transform .18s ease;}
+  .hist-toggle.open .chevron{transform:rotate(90deg);}
   .hist-table{width:100%; border-collapse:collapse; margin-top:6px; font-size:.78rem;}
   .hist-table th, .hist-table td{padding:3px 4px; text-align:right; border-bottom:1px solid var(--surface-2);}
   .hist-table th:first-child, .hist-table td:first-child{text-align:left;}
@@ -111,53 +137,63 @@
     <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil.</div>
   </div>
 
-  <div class="config" style="margin-bottom:18px;">
-    <label style="display:block; margin-bottom:6px; font-weight:600;">Synchroniser mes données entre appareils</label>
-    <p class="hist-hint">Tout ce qui est saisi ici (valeurs suivies, séances, PEA, objectifs, dividendes...) reste uniquement sur cet appareil. Pour le retrouver ailleurs (ex. votre iPhone) : exportez un fichier ici, transférez-le vous-même (AirDrop, iCloud Drive, e-mail...), puis importez-le sur l'autre appareil.</p>
-    <div class="hist-paste-row" style="margin-top:0;">
-      <button id="exportDataBtn" type="button">⬇️ Exporter mes données (.json)</button>
-      <button id="importDataBtn" type="button">⬆️ Importer un fichier</button>
-      <input id="importDataFile" type="file" accept="application/json,.json" style="display:none;">
-    </div>
-    <p class="hist-hint" style="margin-top:4px;">⚠️ Importer un fichier <b>remplace entièrement</b> les données déjà présentes sur cet appareil (une confirmation vous sera demandée).</p>
-    <div id="syncDataResult" class="hist-hint" style="margin-top:-6px;"></div>
+  <!-- Barre d'outils secondaire : actions occasionnelles, repliées par défaut
+       pour ne pas encombrer l'écran — seul l'ajout d'une valeur (ci-dessous)
+       reste toujours visible. -->
+  <div class="toolbar-row">
+    <button id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsPanel">⚙️ Réglages</button>
+    <button id="askToggle" type="button" aria-expanded="false" aria-controls="askPanel">💬 Poser une question</button>
   </div>
 
-  <div class="config" style="margin-bottom:18px;">
-    <button class="hist-toggle" id="dailyUpdateToggle" type="button">📋 Mise à jour quotidienne des cours (tableau groupé)</button>
-    <div id="dailyUpdatePanel" hidden style="margin-top:8px;">
-      <p class="hist-hint">Pour chaque valeur, collez directement dans la case « Coller ici » la ligne correspondante copiée depuis la cote générale Boursorama (colonnes Dernier, Var., Ouv., +Haut, +Bas, Var. depuis le 1er janvier, Volume, séparées par des tabulations) — les colonnes se remplissent automatiquement dès le collage (le « (c) » à côté du cours de clôture est retiré automatiquement), corrigez si besoin, puis cliquez sur « Enregistrer tout » en bas du tableau. La date retenue est celle d'aujourd'hui pour toutes les valeurs.</p>
-      <p class="hist-hint">Le « Var. » collé est indicatif : il est comparé à la variation recalculée automatiquement par le widget (à partir de votre dernière clôture enregistrée) et un écart notable est signalé après enregistrement, mais il ne remplace jamais ce calcul. Le volume est automatiquement converti en milliers.</p>
-      <div style="overflow-x:auto;">
-      <table class="hist-table" id="dailyUpdateTable">
-        <thead><tr>
-          <th>Valeur</th><th>Coller ici</th>
-          <th title="Cours de clôture">Dernier</th>
-          <th title="Variation en séance (indicatif, non enregistré tel quel)">Var.</th>
-          <th title="Cours d'ouverture">Ouv.</th>
-          <th title="Plus haut en séance">+Haut</th>
-          <th title="Plus bas en séance">+Bas</th>
-          <th title="Variation depuis le 1er janvier">Var/1Janv</th>
-          <th title="Volume échangé, converti automatiquement en milliers">Vol.</th>
-        </tr></thead>
-        <tbody id="dailyUpdateBody"></tbody>
-      </table>
+  <div id="settingsPanel" class="config" hidden style="margin-bottom:14px;">
+    <div style="margin-bottom:14px;">
+      <label style="display:block; margin-bottom:6px; font-weight:600;">Synchroniser mes données entre appareils</label>
+      <p class="hist-hint">Tout ce qui est saisi ici (valeurs suivies, séances, PEA, objectifs, dividendes...) reste uniquement sur cet appareil. Pour le retrouver ailleurs (ex. votre iPhone) : exportez un fichier ici, transférez-le vous-même (AirDrop, iCloud Drive, e-mail...), puis importez-le sur l'autre appareil.</p>
+      <div class="hist-paste-row" style="margin-top:0;">
+        <button id="exportDataBtn" type="button">⬇️ Exporter mes données (.json)</button>
+        <button id="importDataBtn" type="button">⬆️ Importer un fichier</button>
+        <input id="importDataFile" type="file" accept="application/json,.json" style="display:none;">
       </div>
-      <button id="dailyUpdateSaveBtn" type="button" style="margin-top:8px;">Enregistrer tout</button>
-      <div id="dailyUpdateResult" class="hist-hint" style="margin-top:6px;"></div>
+      <p class="hist-hint" style="margin-top:4px;">⚠️ Importer un fichier <b>remplace entièrement</b> les données déjà présentes sur cet appareil (une confirmation vous sera demandée).</p>
+      <div id="syncDataResult" class="hist-hint" style="margin-top:-6px;"></div>
+    </div>
+
+    <div style="margin-bottom:14px; padding-top:12px; border-top:1px solid var(--border);">
+      <button class="hist-toggle" id="dailyUpdateToggle" type="button">📋 Mise à jour quotidienne des cours (tableau groupé)<span class="chevron">›</span></button>
+      <div id="dailyUpdatePanel" hidden style="margin-top:8px;">
+        <p class="hist-hint">Pour chaque valeur, collez directement dans la case « Coller ici » la ligne correspondante copiée depuis la cote générale Boursorama (colonnes Dernier, Var., Ouv., +Haut, +Bas, Var. depuis le 1er janvier, Volume, séparées par des tabulations) — les colonnes se remplissent automatiquement dès le collage (le « (c) » à côté du cours de clôture est retiré automatiquement), corrigez si besoin, puis cliquez sur « Enregistrer tout » en bas du tableau. La date retenue est celle d'aujourd'hui pour toutes les valeurs.</p>
+        <p class="hist-hint">Le « Var. » collé est indicatif : il est comparé à la variation recalculée automatiquement par le widget (à partir de votre dernière clôture enregistrée) et un écart notable est signalé après enregistrement, mais il ne remplace jamais ce calcul. Le volume est automatiquement converti en milliers.</p>
+        <div style="overflow-x:auto;">
+        <table class="hist-table" id="dailyUpdateTable">
+          <thead><tr>
+            <th>Valeur</th><th>Coller ici</th>
+            <th title="Cours de clôture">Dernier</th>
+            <th title="Variation en séance (indicatif, non enregistré tel quel)">Var.</th>
+            <th title="Cours d'ouverture">Ouv.</th>
+            <th title="Plus haut en séance">+Haut</th>
+            <th title="Plus bas en séance">+Bas</th>
+            <th title="Variation depuis le 1er janvier">Var/1Janv</th>
+            <th title="Volume échangé, converti automatiquement en milliers">Vol.</th>
+          </tr></thead>
+          <tbody id="dailyUpdateBody"></tbody>
+        </table>
+        </div>
+        <button id="dailyUpdateSaveBtn" type="button" style="margin-top:8px;">Enregistrer tout</button>
+        <div id="dailyUpdateResult" class="hist-hint" style="margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <div style="padding-top:12px; border-top:1px solid var(--border);">
+      <button class="hist-toggle" id="weeklyUpdateToggle" type="button">🗓️ Mise à jour hebdomadaire (historique 5 jours, valeur par valeur)<span class="chevron">›</span></button>
+      <div id="weeklyUpdatePanel" hidden style="margin-top:8px;">
+        <p class="hist-hint">Complète le tableau quotidien ci-dessus : celui-ci reprend, pour <b>une valeur à la fois</b>, le tableau « Historique 5 jours » copié directement depuis SA fiche Boursorama (5 jours en colonnes) — pratique pour rattraper toute une semaine en un seul collage par valeur plutôt que jour par jour. Pour chaque valeur listée ci-dessous, ouvrez sa fiche, copiez son tableau « Historique 5 jours » et collez-le dans la case correspondante : les colonnes se remplissent automatiquement (dates réelles comprises), corrigez si besoin, puis cliquez sur « Enregistrer cette semaine ».</p>
+        <p class="hist-hint">Le « Var. » collé est indicatif, comme pour le tableau quotidien : il ne remplace jamais la variation recalculée automatiquement à partir de vos clôtures déjà enregistrées. Le volume est automatiquement converti en milliers.</p>
+        <div id="weeklyUpdateBody"></div>
+      </div>
     </div>
   </div>
 
-  <div class="config" style="margin-bottom:18px;">
-    <button class="hist-toggle" id="weeklyUpdateToggle" type="button">🗓️ Mise à jour hebdomadaire (historique 5 jours, valeur par valeur)</button>
-    <div id="weeklyUpdatePanel" hidden style="margin-top:8px;">
-      <p class="hist-hint">Complète le tableau quotidien ci-dessus : celui-ci reprend, pour <b>une valeur à la fois</b>, le tableau « Historique 5 jours » copié directement depuis SA fiche Boursorama (5 jours en colonnes) — pratique pour rattraper toute une semaine en un seul collage par valeur plutôt que jour par jour. Pour chaque valeur listée ci-dessous, ouvrez sa fiche, copiez son tableau « Historique 5 jours » et collez-le dans la case correspondante : les colonnes se remplissent automatiquement (dates réelles comprises), corrigez si besoin, puis cliquez sur « Enregistrer cette semaine ».</p>
-      <p class="hist-hint">Le « Var. » collé est indicatif, comme pour le tableau quotidien : il ne remplace jamais la variation recalculée automatiquement à partir de vos clôtures déjà enregistrées. Le volume est automatiquement converti en milliers.</p>
-      <div id="weeklyUpdateBody"></div>
-    </div>
-  </div>
-
-  <div class="config" style="margin-bottom:18px;">
+  <div id="askPanel" class="config" hidden style="margin-bottom:14px;">
     <label for="askQuestion" style="display:block; margin-bottom:6px; font-weight:600;">Poser une question à Claude (sur une valeur suivie ou d'ordre général)</label>
     <textarea id="askQuestion" class="hist-paste" placeholder="Ex : Que penses-tu d'Alstom en ce moment ? — ou — J'ai 1000 € à investir, sur laquelle de mes valeurs suivies me conseilles-tu de me positionner et à quel cours ?"></textarea>
     <div class="hist-paste-row" style="margin-top:0;">
@@ -187,7 +223,7 @@
   <p class="sub" style="margin-top:-14px;">Valeurs Euronext Paris : ajoutez le suffixe <code>.PA</code> (ex. <code>MC.PA</code> LVMH, <code>TTE.PA</code> TotalEnergies, <code>OR.PA</code> L'Oréal). Les fondamentaux/dividendes de ces valeurs peuvent rester indisponibles selon le plan API configuré côté backend — voir <code>README.md</code>.</p>
 
   <div class="config" style="margin-bottom:18px;">
-    <button class="hist-toggle" id="bulkAddToggle" type="button">➕ Ajouter plusieurs valeurs d'un coup</button>
+    <button class="hist-toggle" id="bulkAddToggle" type="button">➕ Ajouter plusieurs valeurs d'un coup<span class="chevron">›</span></button>
     <div id="bulkAddPanel" hidden style="margin-top:8px;">
       <p class="hist-hint">Collez une liste de tickers et/ou de noms d'actions connus (un par ligne, ou séparés par des virgules) — ex. <code>Alstom, LVMH, ALO.PA, TotalEnergies</code>. Le lien Boursorama est pré-rempli automatiquement pour les valeurs Euronext Paris reconnues (à vérifier/corriger si besoin).</p>
       <textarea id="bulkAddInput" class="hist-paste" placeholder="Ex : Alstom, LVMH, TotalEnergies, ALO.PA"></textarea>
@@ -703,7 +739,7 @@ function dividendBox(ticker, devise){
   return `<div class="hist-block">
     <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">💶 Dividendes</div>
     ${savedTable}
-    <button class="hist-toggle" data-action="toggle-div-form" data-ticker="${ticker}">📋 ${saved ? 'Modifier les données de dividende' : 'Saisir les données de dividende'}</button>
+    <button class="hist-toggle${open ? ' open' : ''}" data-action="toggle-div-form" data-ticker="${ticker}">📋 ${saved ? 'Modifier les données de dividende' : 'Saisir les données de dividende'}<span class="chevron">›</span></button>
     <div ${open ? '' : 'hidden'}>
       <p class="hist-hint">Collez ci-dessous le tableau des dividendes tel qu'il apparaît sur la fiche (années, dividende/action, rendement, bénéfice net/action, PER), puis cliquez sur « Analyser ». Corrigez ensuite chaque case si besoin avant d'enregistrer.</p>
       <div class="hist-paste-row">
@@ -1475,7 +1511,7 @@ function historiqueBox(ticker, currentClose){
       </tr>`).join('');
     return `<div class="hist-block">
       ${sourceRow}
-      <button class="hist-toggle" data-action="toggle-hist-form" data-ticker="${ticker}">📋 Saisir les données historiques</button>
+      <button class="hist-toggle${open ? ' open' : ''}" data-action="toggle-hist-form" data-ticker="${ticker}">📋 Saisir les données historiques<span class="chevron">›</span></button>
       <div ${open ? '' : 'hidden'}>
         <p class="hist-hint">Collez ci-dessous le tableau tel qu'il apparaît sur la page (période, variation, plus haut, plus bas), puis appuyez sur Entrée ou cliquez sur « Analyser » — les champs ci-dessous se remplissent automatiquement. Vous pouvez ensuite corriger chaque case à la main avant d'enregistrer.</p>
         <div class="hist-paste-row">
@@ -2272,14 +2308,29 @@ document.getElementById('grid').addEventListener('click', async e => {
   }
 });
 
-document.getElementById('bulkAddToggle').addEventListener('click', () => {
+document.getElementById('bulkAddToggle').addEventListener('click', e => {
   const panel = document.getElementById('bulkAddPanel');
   panel.hidden = !panel.hidden;
+  e.currentTarget.classList.toggle('open', !panel.hidden);
 });
 
-document.getElementById('dailyUpdateToggle').addEventListener('click', () => {
+document.getElementById('settingsToggle').addEventListener('click', e => {
+  const panel = document.getElementById('settingsPanel');
+  panel.hidden = !panel.hidden;
+  e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+});
+
+document.getElementById('askToggle').addEventListener('click', e => {
+  const panel = document.getElementById('askPanel');
+  panel.hidden = !panel.hidden;
+  e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  if(!panel.hidden) document.getElementById('askQuestion').focus();
+});
+
+document.getElementById('dailyUpdateToggle').addEventListener('click', e => {
   const panel = document.getElementById('dailyUpdatePanel');
   panel.hidden = !panel.hidden;
+  e.currentTarget.classList.toggle('open', !panel.hidden);
   if(!panel.hidden) renderDailyUpdateTable();
 });
 document.getElementById('dailyUpdatePanel').addEventListener('input', e => {
@@ -2297,9 +2348,10 @@ document.getElementById('dailyUpdateSaveBtn').addEventListener('click', () => {
   renderDailyUpdateTable();
 });
 
-document.getElementById('weeklyUpdateToggle').addEventListener('click', () => {
+document.getElementById('weeklyUpdateToggle').addEventListener('click', e => {
   const panel = document.getElementById('weeklyUpdatePanel');
   panel.hidden = !panel.hidden;
+  e.currentTarget.classList.toggle('open', !panel.hidden);
   if(!panel.hidden) renderWeeklyUpdatePanel();
 });
 document.getElementById('weeklyUpdatePanel').addEventListener('input', e => {
