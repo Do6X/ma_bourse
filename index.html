@@ -132,9 +132,16 @@
   <p class="sub">« Éligible PEA » est une <b>estimation automatique</b> (pays du siège social), pas une vérification officielle — aucune liste publique d'éligibilité PEA n'est consultable par API. Vérifiez toujours auprès de votre courtier avant un achat en PEA.</p>
 
   <div class="config">
-    URL du backend : <input id="apiBase" placeholder="https://votre-backend.onrender.com" style="font-family:monospace; padding:4px 8px; border-radius:6px; border:1px solid var(--border); width:260px;">
+    <!-- Valeur par défaut = votre backend Render actuel, pré-remplie dans le
+         HTML lui-même (pas seulement via localStorage) : même si le
+         navigateur n'a conservé aucune donnée du site (navigation privée,
+         "effacer à la fermeture"...), ce champ reste déjà rempli au
+         chargement de la page, sans rien à taper ni à réimporter juste pour
+         ça. loadPersisted() ci-dessous écrase cette valeur par défaut UNIQUEMENT
+         si une URL différente a été enregistrée sur cet appareil. -->
+    URL du backend : <input id="apiBase" value="https://conseil-bourse-api.onrender.com" placeholder="https://votre-backend.onrender.com" style="font-family:monospace; padding:4px 8px; border-radius:6px; border:1px solid var(--border); width:260px;">
     <span class="status"><span class="dot" id="statusDot"></span><span id="statusText">non vérifié</span></span>
-    <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil.</div>
+    <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil. Pré-remplie avec le backend actuel par défaut.</div>
   </div>
 
   <!-- Barre d'outils secondaire : actions occasionnelles, repliées par défaut
@@ -143,6 +150,7 @@
   <div class="toolbar-row">
     <button id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsPanel">⚙️ Réglages</button>
     <button id="askToggle" type="button" aria-expanded="false" aria-controls="askPanel">💬 Poser une question</button>
+    <button id="agendaToggle" type="button" aria-expanded="false" aria-controls="agendaPanel">📅 Agenda</button>
   </div>
 
   <div id="settingsPanel" class="config" hidden style="margin-bottom:14px;">
@@ -202,6 +210,12 @@
     <p class="hist-hint">Ce widget ne peut pas interroger une IA lui-même (pas de backend prévu pour ça) : ce bouton copie un résumé de toutes vos valeurs suivies (cours, objectif, consensus, position) suivi de votre question, prêt à coller dans une conversation avec Claude.</p>
     <div id="askCopyResult" class="hist-hint" style="margin-top:-6px;"></div>
     <textarea id="askCopyFallback" class="hist-paste" style="display:none; margin-top:6px; min-height:120px;" readonly></textarea>
+  </div>
+
+  <div id="agendaPanel" class="config" hidden style="margin-bottom:14px;">
+    <label style="display:block; margin-bottom:6px; font-weight:600;">📅 Agenda — prochains événements</label>
+    <p class="hist-hint">Prochaine publication de résultats et prochain versement de dividende, pour toutes vos valeurs suivies, triés par date la plus proche. Ces dates sont récupérées automatiquement par le backend quand son plan API les fournit (certaines valeurs, notamment hors États-Unis, peuvent rester incomplètes selon le plan en cours) — vérifiez toujours la date exacte sur la fiche de la valeur avant d'agir en conséquence.</p>
+    <div id="agendaContent"></div>
   </div>
 
   <div class="config" style="margin-bottom:18px;">
@@ -882,6 +896,77 @@ function frDate(iso){
 // calculée en UTC pur pour éviter tout décalage lié au fuseau horaire local.
 function daysBetweenIso(a, b){
   return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000);
+}
+
+// Agenda (résultats + dividende) : rassemble les dates à venir connues pour
+// une valeur, à partir des champs renvoyés par l'API (`prochaine_publication_
+// resultats`, nouveau champ, et `dividendes.prochaine_date_versement`, déjà
+// renvoyé mais jamais affiché jusqu'ici). Les deux peuvent être absents
+// (plan API, valeur non couverte) : dans ce cas la valeur n'apparaît
+// simplement pas dans l'agenda, sans erreur.
+function ticketAgendaEvents(ticker, raw){
+  if(!raw || raw.error) return [];
+  const todayStr = isoDate(new Date());
+  const events = [];
+  const apiNom = raw.nom || null;
+  const earningsDate = raw.prochaine_publication_resultats;
+  if(earningsDate && daysBetweenIso(todayStr, earningsDate) >= 0){
+    events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: 'Publication de résultats', date: earningsDate });
+  }
+  const divDate = raw.dividendes && raw.dividendes.prochaine_date_versement;
+  if(divDate && daysBetweenIso(todayStr, divDate) >= 0){
+    events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate });
+  }
+  return events;
+}
+
+function whenLabel(dateIso){
+  const n = daysBetweenIso(isoDate(new Date()), dateIso);
+  if(n === 0) return "aujourd'hui";
+  if(n === 1) return 'demain';
+  return `dans ${n} jours`;
+}
+
+// Ligne compacte affichée directement sur la fiche d'une valeur (sous les
+// autres informations) quand au moins une date à venir est connue pour elle.
+function agendaLine(ticker, raw){
+  const events = ticketAgendaEvents(ticker, raw);
+  if(!events.length) return '';
+  const parts = events.map(ev => `${ev.icon} ${ev.label} le ${frDate(ev.date)} (${whenLabel(ev.date)})`);
+  return `<div class="kv" style="margin-top:2px;"><span style="font-size:.78rem; color:var(--ink-2);">${parts.join(' · ')}</span></div>`;
+}
+
+// Agrège les événements de toutes les valeurs suivies pour le panneau
+// "Agenda" global, triés par date la plus proche d'abord.
+function collectAgendaEvents(){
+  const events = [];
+  state.tickers.forEach(t => {
+    const entry = state.data[t];
+    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
+    events.push(...ticketAgendaEvents(t, raw));
+  });
+  events.sort((a, b) => (a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
+  return events;
+}
+
+function renderAgenda(){
+  const el = document.getElementById('agendaContent');
+  if(!el) return;
+  const events = collectAgendaEvents();
+  if(!events.length){
+    el.innerHTML = '<p class="hist-hint">Aucune date à venir détectée automatiquement pour le moment. Le calendrier de résultats est une donnée récente côté backend (peut nécessiter que le backend soit à jour) ; les dates de dividende dépendent de ce que l\'API renvoie pour chaque valeur.</p>';
+    return;
+  }
+  const nomManuelMap = loadNomManuel();
+  const rows = events.map(ev => {
+    const nom = nomManuelMap[ev.ticker] || ev.apiNom || null;
+    return `<tr>
+      <td>${frDate(ev.date)}<br><span style="font-size:.72rem; color:var(--ink-muted);">${whenLabel(ev.date)}</span></td>
+      <td>${ev.icon} ${ev.label}</td>
+      <td><b>${nom ? escapeHtml(nom) : ev.ticker}</b>${nom ? '<br><span style="color:var(--ink-muted);">' + ev.ticker + '</span>' : ''}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<div style="overflow-x:auto;"><table class="hist-table"><thead><tr><th>Date</th><th>Événement</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // Échappement HTML — Sécurité des données : tout ce qui est affiché dans
@@ -1579,6 +1664,23 @@ function positionNote(pnlPct, conseil){
   return null;
 }
 
+// Clarification de l'avis (badge) : "Conserver" est de loin le cas le plus
+// fréquent par construction — decision_conseil() (backend) n'affiche
+// "Acheter" ou "Vendre" que si TROIS conditions sont réunies EN MÊME TEMPS
+// (score global, RSI et tonalité des actualités), sinon il retombe toujours
+// sur "Conserver". Plutôt que de modifier ces seuils (non demandé, et
+// risqué sans recul sur des données réelles), on clarifie juste l'affichage :
+// une info-bulle sur le badge explique la règle, et le score global brut est
+// affiché à côté pour une lecture plus fine que le seul badge à 3 valeurs.
+function conseilTooltip(d){
+  const g = d.scoring && d.scoring.global;
+  const rsi = d.technique && d.technique.rsi14;
+  const tonalite = (d.sentiment && d.sentiment.tonalite_actualites) || '—';
+  const gTxt = (g !== null && g !== undefined) ? fmt(g, 2) + '/10' : '—';
+  const rsiTxt = (rsi !== null && rsi !== undefined) ? fmt(rsi, 1) : '—';
+  return `Règle automatique du widget (pas un conseil personnalisé) : "Acheter" seulement si score ≥7/10 ET RSI <30 ET actualités positives, réunis en même temps ; "Vendre" seulement si score ≤3/10 ET RSI >70 ET actualités négatives, réunis en même temps ; "Conserver" dans tous les autres cas (de loin le plus fréquent). Ici : score ${gTxt}, RSI ${rsiTxt}, actualités ${tonalite}.`;
+}
+
 function apiBase(){ return document.getElementById('apiBase').value.replace(/\/$/, ''); }
 
 async function checkHealth(){
@@ -1680,7 +1782,11 @@ function cardContent(ticker, d, alertMsgs){
   const alertsHtml = (alertMsgs && alertMsgs.length)
     ? alertMsgs.map(a=>`<div class="alertbox">${escapeHtml(a.message)}</div>`).join('')
     : '';
-  const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
+  // d.source_bascule_api est vrai quand FMP (source de cours prioritaire côté
+  // backend) n'a pas répondu et que Yahoo Finance a été utilisé en secours —
+  // c'est donc FMP qui est indisponible, pas Yahoo (le texte précédent disait
+  // l'inverse, corrigé ici).
+  const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : source principale (FMP) indisponible, Yahoo Finance utilisé en secours pour le cours.</div>` : '';
   const devise = currencySymbol(d.devise);
   const nomManuel = escapeHtml(loadNomManuel()[ticker]);
   const costBasis = loadCostBasis()[ticker];
@@ -1774,13 +1880,14 @@ function cardContent(ticker, d, alertMsgs){
         <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
       </div>
     </div>
-    <span class="badge ${d.conseil}">${d.conseil}</span>
+    <span class="badge ${d.conseil}" title="${escapeHtml(conseilTooltip(d))}">${d.conseil}</span><span style="font-size:.72rem; color:var(--ink-muted); margin-left:5px; cursor:help;" title="${escapeHtml(conseilTooltip(d))}">score ${d.scoring && d.scoring.global!==null && d.scoring.global!==undefined ? fmt(d.scoring.global,2)+'/10' : '—'} ⓘ</span>
     <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
       <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+escapeHtml(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
+    ${agendaLine(ticker, d)}
     ${analysteBox(ticker, devise)}
     ${peaBox(ticker, d.eligibilite_pea)}
     ${dividendBox(ticker, devise)}
@@ -1870,6 +1977,7 @@ function render(){
     if(cb) cb.checked = true;
   });
   updateCompareBar();
+  renderAgenda();
 }
 
 async function loadTicker(ticker){
@@ -2160,7 +2268,7 @@ function buildCompareTableHtml(tickers){
       <td>${cours !== null && cours !== undefined ? fmtPrix(cours)+' '+deviseTxt : '—'}</td>
       <td>${metrics.dailyVarPct !== null && metrics.dailyVarPct !== undefined ? pctSpan(metrics.dailyVarPct) : '—'}</td>
       <td>${metrics.weeklyVarPct !== null && metrics.weeklyVarPct !== undefined ? pctSpan(metrics.weeklyVarPct) : '—'}</td>
-      <td>${raw && raw.conseil ? `<span class="badge ${raw.conseil}">${raw.conseil}</span>` : '—'}</td>
+      <td>${raw && raw.conseil ? `<span class="badge ${raw.conseil}" title="${escapeHtml(conseilTooltip(raw))}">${raw.conseil}</span>` : '—'}</td>
       <td>${tier ? `<b style="color:${tier.color}">${tier.label}</b>` : '—'}</td>
       <td>${objectifRetenu !== null && objectifRetenu !== undefined ? fmtPrix(objectifRetenu)+' '+deviseTxt + (potentielPct!==null && potentielPct!==undefined ? ' ('+pctSpan(potentielPct)+')':'') : '—'}</td>
       <td>${raw && raw.niveau_risque !== undefined ? raw.niveau_risque+'/10' : '—'}</td>
@@ -2325,6 +2433,13 @@ document.getElementById('askToggle').addEventListener('click', e => {
   panel.hidden = !panel.hidden;
   e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
   if(!panel.hidden) document.getElementById('askQuestion').focus();
+});
+
+document.getElementById('agendaToggle').addEventListener('click', e => {
+  const panel = document.getElementById('agendaPanel');
+  panel.hidden = !panel.hidden;
+  e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  if(!panel.hidden) renderAgenda();
 });
 
 document.getElementById('dailyUpdateToggle').addEventListener('click', e => {

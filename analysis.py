@@ -612,6 +612,12 @@ def analyze_stock(ticker: str) -> dict:
     target = (fmp_get("price-target-consensus", ticker) or [{}])[0]
     grades = (fmp_get("grades-consensus", ticker) or [{}])[0]
     dividends = fmp_get("dividends", ticker, limit=8) or []
+    # Calendrier de resultats : l'endpoint "earnings" (generation API "stable")
+    # renvoie, pour un symbole donne, un historique de publications passees ET
+    # a venir (champ "date"), ces dernieres n'ayant pas encore d'EPS/CA reels.
+    # Nouveau champ (agenda) : certaines valeurs, notamment hors US, peuvent
+    # ne pas en disposer selon le plan API, d'ou le repli silencieux a None.
+    earnings_calendar = fmp_get("earnings", ticker, limit=8) or []
     profile = fetch_company_profile(ticker)
 
     company_name = profile.get("company_name", ticker)
@@ -657,6 +663,27 @@ def analyze_stock(ticker: str) -> dict:
 
     div_annuel = round(sum(d.get("dividend", 0) for d in dividends[:4]), 4) if dividends else 0
 
+    # Agenda (resultats + dividende) : toutes les dates sont comparees a la
+    # date du jour (UTC serveur) en ISO "AAAA-MM-JJ", format deja renvoye par
+    # FMP pour ces deux endpoints.
+    today_iso = datetime.now().date().isoformat()
+    earnings_dates = sorted(
+        e.get("date") for e in earnings_calendar if isinstance(e, dict) and e.get("date")
+    )
+    prochaine_publication_resultats = next((d for d in earnings_dates if d >= today_iso), None)
+
+    # Dividende : certaines fiches Euronext Paris ne renvoient que des
+    # versements deja passes (endpoint historique) - on ne retient comme
+    # "prochaine date" que celles reellement a venir, et on garde le dernier
+    # versement passe a part pour ne pas perdre cette information.
+    dividend_entries = sorted(
+        (d for d in dividends if isinstance(d, dict) and d.get("paymentDate")),
+        key=lambda d: d["paymentDate"],
+    )
+    prochaine_date_versement = next((d["paymentDate"] for d in dividend_entries if d["paymentDate"] >= today_iso), None)
+    versements_passes = [d for d in dividend_entries if d["paymentDate"] < today_iso]
+    dernier_versement = versements_passes[-1] if versements_passes else None
+
     result = {
         "ticker": ticker, "nom": company_name, "secteur": secteur, "devise": devise,
         "date_analyse": datetime.now().isoformat(timespec="seconds"),
@@ -689,7 +716,10 @@ def analyze_stock(ticker: str) -> dict:
                             )},
         "dividendes": {"annuel_en_cours": div_annuel,
                       "rendement_pct": round(div_yield * 100, 2) if div_yield else None,
-                      "prochaine_date_versement": dividends[0].get("paymentDate") if dividends else None},
+                      "prochaine_date_versement": prochaine_date_versement,
+                      "dernier_versement_date": dernier_versement.get("paymentDate") if dernier_versement else None,
+                      "dernier_versement_montant": dernier_versement.get("dividend") if dernier_versement else None},
+        "prochaine_publication_resultats": prochaine_publication_resultats,
         "strategie_achat": {**strategie_achat(risque["final"], price), "objectif_vise": objectif_3m},
     }
     logger.info("analyze_stock_done ticker=%s duration_ms=%d conseil=%s bascule=%s",
