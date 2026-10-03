@@ -132,16 +132,9 @@
   <p class="sub">« Éligible PEA » est une <b>estimation automatique</b> (pays du siège social), pas une vérification officielle — aucune liste publique d'éligibilité PEA n'est consultable par API. Vérifiez toujours auprès de votre courtier avant un achat en PEA.</p>
 
   <div class="config">
-    <!-- Valeur par défaut = votre backend Render actuel, pré-remplie dans le
-         HTML lui-même (pas seulement via localStorage) : même si le
-         navigateur n'a conservé aucune donnée du site (navigation privée,
-         "effacer à la fermeture"...), ce champ reste déjà rempli au
-         chargement de la page, sans rien à taper ni à réimporter juste pour
-         ça. loadPersisted() ci-dessous écrase cette valeur par défaut UNIQUEMENT
-         si une URL différente a été enregistrée sur cet appareil. -->
-    URL du backend : <input id="apiBase" value="https://conseil-bourse-api.onrender.com" placeholder="https://votre-backend.onrender.com" style="font-family:monospace; padding:4px 8px; border-radius:6px; border:1px solid var(--border); width:260px;">
+    URL du backend : <input id="apiBase" placeholder="https://votre-backend.onrender.com" style="font-family:monospace; padding:4px 8px; border-radius:6px; border:1px solid var(--border); width:260px;">
     <span class="status"><span class="dot" id="statusDot"></span><span id="statusText">non vérifié</span></span>
-    <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil. Pré-remplie avec le backend actuel par défaut.</div>
+    <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil.</div>
   </div>
 
   <!-- Barre d'outils secondaire : actions occasionnelles, repliées par défaut
@@ -150,7 +143,6 @@
   <div class="toolbar-row">
     <button id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsPanel">⚙️ Réglages</button>
     <button id="askToggle" type="button" aria-expanded="false" aria-controls="askPanel">💬 Poser une question</button>
-    <button id="agendaToggle" type="button" aria-expanded="false" aria-controls="agendaPanel">📅 Agenda</button>
   </div>
 
   <div id="settingsPanel" class="config" hidden style="margin-bottom:14px;">
@@ -164,16 +156,6 @@
       </div>
       <p class="hist-hint" style="margin-top:4px;">⚠️ Importer un fichier <b>remplace entièrement</b> les données déjà présentes sur cet appareil (une confirmation vous sera demandée).</p>
       <div id="syncDataResult" class="hist-hint" style="margin-top:-6px;"></div>
-    </div>
-
-    <div style="margin-bottom:14px; padding-top:12px; border-top:1px solid var(--border);">
-      <label style="display:block; margin-bottom:6px; font-weight:600;">Récupérer l'historique des objectifs depuis une ancienne sauvegarde</label>
-      <p class="hist-hint">Si vous avez un ancien fichier exporté avant la mise en place de l'historique des objectifs de cours, vous pouvez le ré-importer ici pour en récupérer les anciennes valeurs datées — contrairement à l'import ci-dessus, <b>rien n'est remplacé</b> : seul l'historique est complété, vos données actuelles restent intactes.</p>
-      <div class="hist-paste-row" style="margin-top:0;">
-        <button id="importObjectifHistoriqueBtn" type="button">📜 Importer un ancien fichier</button>
-        <input id="importObjectifHistoriqueFile" type="file" accept="application/json,.json" style="display:none;">
-      </div>
-      <div id="importObjectifHistoriqueResult" class="hist-hint" style="margin-top:-6px;"></div>
     </div>
 
     <div style="margin-bottom:14px; padding-top:12px; border-top:1px solid var(--border);">
@@ -220,12 +202,6 @@
     <p class="hist-hint">Ce widget ne peut pas interroger une IA lui-même (pas de backend prévu pour ça) : ce bouton copie un résumé de toutes vos valeurs suivies (cours, objectif, consensus, position) suivi de votre question, prêt à coller dans une conversation avec Claude.</p>
     <div id="askCopyResult" class="hist-hint" style="margin-top:-6px;"></div>
     <textarea id="askCopyFallback" class="hist-paste" style="display:none; margin-top:6px; min-height:120px;" readonly></textarea>
-  </div>
-
-  <div id="agendaPanel" class="config" hidden style="margin-bottom:14px;">
-    <label style="display:block; margin-bottom:6px; font-weight:600;">📅 Agenda — prochains événements</label>
-    <p class="hist-hint">Prochaine publication de résultats et prochain versement de dividende, pour toutes vos valeurs suivies, triés par date la plus proche. Ces dates sont récupérées automatiquement par le backend quand son plan API les fournit — ce qui n'est actuellement pas le cas pour ces deux informations avec votre plan (quelle que soit la valeur, y compris américaine). Vous pouvez les renseigner vous-même dans le bloc « 📅 Agenda — saisie manuelle » de chaque fiche : une date saisie à la main prime alors toujours sur celle de l'API et apparaît ici marquée « (saisi) ». Vérifiez toujours la date exacte sur la fiche source avant d'agir en conséquence.</p>
-    <div id="agendaContent"></div>
   </div>
 
   <div class="config" style="margin-bottom:18px;">
@@ -282,7 +258,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), sortMode: 'alpha', compareSelected: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), sortMode: 'alpha', compareSelected: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -334,50 +310,9 @@ function saveCostBasis(ticker, value){
 function loadObjectifManuel(){
   try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuel') || '{}'); }catch(e){ return {}; }
 }
-// Historique des anciens objectifs de cours (3 mois) saisis à la main :
-// chaque fois qu'une valeur en remplace une autre (ou est effacée), l'ancienne
-// est archivée ici avec la date qu'elle affichait (celle de objectifManuelDate
-// au moment du remplacement) avant d'être perdue — utile pour juger après
-// coup de la fiabilité de ces objectifs dans le temps (voir échange avec
-// l'utilisateur sur l'intérêt de conserver cet historique).
-function loadObjectifManuelHistorique(){
-  try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuelHistorique') || '{}'); }catch(e){ return {}; }
-}
-function addObjectifManuelHistorique(ticker, value, date){
-  if(value===null || value===undefined || isNaN(value)) return;
-  const store = loadObjectifManuelHistorique();
-  const list = store[ticker] || [];
-  // Évite d'archiver deux fois exactement la même valeur à la même date
-  // (ex. si l'utilisateur ressaisit la même valeur par erreur).
-  if(list.some(h => h.value === value && h.date === (date || null))) return;
-  list.push({ value, date: date || null });
-  list.sort((a, b) => (a.date || '') < (b.date || '') ? -1 : ((a.date || '') > (b.date || '') ? 1 : 0));
-  store[ticker] = list;
-  try{ localStorage.setItem('stockAdvice.objectifManuelHistorique', JSON.stringify(store)); }catch(e){}
-}
-function removeObjectifManuelHistorique(ticker, index){
-  const store = loadObjectifManuelHistorique();
-  const list = store[ticker] || [];
-  list.splice(index, 1);
-  if(list.length) store[ticker] = list; else delete store[ticker];
-  try{ localStorage.setItem('stockAdvice.objectifManuelHistorique', JSON.stringify(store)); }catch(e){}
-}
-// Important : l'archivage ci-dessous suppose l'ordre de saisie habituel de
-// l'interface (champ valeur avant champ date) — quand vous reportez un
-// nouvel objectif, saisissez d'abord la NOUVELLE valeur, puis mettez à jour
-// sa date juste après. Si la date est modifiée AVANT la valeur, l'ancienne
-// date aura déjà été écrasée au moment où la valeur change, et l'entrée
-// archivée portera alors la nouvelle date plutôt que l'ancienne.
 function saveObjectifManuel(ticker, value){
   const store = loadObjectifManuel();
-  const oldValue = store[ticker];
-  const hasOld = (oldValue !== undefined && oldValue !== null && !isNaN(oldValue));
-  const newIsValid = !(value===null || value===undefined || isNaN(value));
-  const changed = hasOld && (!newIsValid || Number(value) !== Number(oldValue));
-  if(changed){
-    addObjectifManuelHistorique(ticker, oldValue, loadObjectifManuelDate()[ticker] || null);
-  }
-  if(!newIsValid) delete store[ticker];
+  if(value===null || value===undefined || isNaN(value)) delete store[ticker];
   else store[ticker] = value;
   try{ localStorage.setItem('stockAdvice.objectifManuel', JSON.stringify(store)); }catch(e){}
 }
@@ -411,90 +346,6 @@ function saveConsensusManuelDate(ticker, date){
   const store = loadConsensusManuelDate();
   if(!date) delete store[ticker]; else store[ticker] = date;
   try{ localStorage.setItem('stockAdvice.consensusManuelDate', JSON.stringify(store)); }catch(e){}
-}
-// Dates d'agenda saisies à la main (résultats, dividende) : repli tant que
-// le plan API ne fournit pas ces informations (voir ticketAgendaEvents, qui
-// leur donne toujours priorité sur la donnée API quand les deux existent).
-// Contrairement à l'objectif/consensus, la valeur saisie EST directement une
-// date (pas de champ numérique séparé).
-function loadEarningsDateManuel(){
-  try{ return JSON.parse(localStorage.getItem('stockAdvice.earningsDateManuel') || '{}'); }catch(e){ return {}; }
-}
-function saveEarningsDateManuel(ticker, date){
-  const store = loadEarningsDateManuel();
-  if(!date) delete store[ticker]; else store[ticker] = date;
-  try{ localStorage.setItem('stockAdvice.earningsDateManuel', JSON.stringify(store)); }catch(e){}
-}
-function loadDividendeDateManuel(){
-  try{ return JSON.parse(localStorage.getItem('stockAdvice.dividendeDateManuel') || '{}'); }catch(e){ return {}; }
-}
-function saveDividendeDateManuel(ticker, date){
-  const store = loadDividendeDateManuel();
-  if(!date) delete store[ticker]; else store[ticker] = date;
-  try{ localStorage.setItem('stockAdvice.dividendeDateManuel', JSON.stringify(store)); }catch(e){}
-}
-// Calendrier complet des publications collé depuis le bloc « Événements à
-// venir » d'une fiche Boursorama (résultats semestriels/annuels, chiffre
-// d'affaires trimestriel...) — un seul collage peut contenir plusieurs
-// événements futurs, contrairement au champ "Prochains résultats" ci-dessus
-// qui ne retient qu'une seule date. Les deux coexistent : utilisez celui qui
-// vous convient le mieux.
-function loadAgendaCalendrierManuel(){
-  try{ return JSON.parse(localStorage.getItem('stockAdvice.agendaCalendrierManuel') || '{}'); }catch(e){ return {}; }
-}
-function saveAgendaCalendrierManuel(ticker, events){
-  const store = loadAgendaCalendrierManuel();
-  if(!events || !events.length) delete store[ticker]; else store[ticker] = events;
-  try{ localStorage.setItem('stockAdvice.agendaCalendrierManuel', JSON.stringify(store)); }catch(e){}
-}
-// Abréviations (et formes complètes) des mois en français telles
-// qu'utilisées par Boursorama dans son calendrier d'événements.
-const BOURSORAMA_MOIS = {
-  janv:1, jan:1, janvier:1, fevr:2, fev:2, fevrier:2, mars:3,
-  avr:4, avril:4, mai:5, juin:6, juil:7, juillet:7, aout:8,
-  sept:9, septembre:9, oct:10, octobre:10, nov:11, novembre:11, dec:12, decembre:12,
-};
-function normalizeAccents(s){
-  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
-// Analyse le bloc « Événements à venir » collé depuis Boursorama. Les
-// liens copiés depuis une page web arrivent parfois au format Markdown
-// ("[17](https://...)") selon l'outil utilisé pour coller : on ne garde que
-// le texte visible. Le format exact (nombre de lignes par événement, retours
-// à la ligne) peut varier selon le navigateur/la méthode de copie, donc
-// plutôt que de découper en blocs de N lignes, on repère chaque occurrence
-// "jour + mois" dans le texte comme point d'ancrage, et tout ce qui suit
-// jusqu'à l'ancrage suivant (après avoir retiré une éventuelle heure du
-// type "00:00" en tête) devient le libellé de l'événement. Boursorama
-// n'affiche jamais l'année : on retient, pour chaque événement, la plus
-// proche occurrence future de ce jour/mois à partir d'aujourd'hui.
-function parseAgendaBoursoramaPaste(text, today){
-  today = today || new Date();
-  const cleaned = String(text || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-  const anchorRe = /(\d{1,2})\s*[\r\n]*\s*([a-zA-Zéûô]{3,10})\.?/g;
-  const matches = [];
-  let m;
-  while((m = anchorRe.exec(cleaned)) !== null){
-    const monthKey = normalizeAccents(m[2]).toLowerCase();
-    const monthNum = BOURSORAMA_MOIS[monthKey];
-    const day = parseInt(m[1], 10);
-    if(!monthNum || !(day >= 1 && day <= 31)) continue;
-    matches.push({ day, month: monthNum, start: m.index, end: anchorRe.lastIndex });
-  }
-  const todayUtc = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
-  const events = [];
-  matches.forEach((mt, i) => {
-    let label = cleaned.slice(mt.end, matches[i + 1] ? matches[i + 1].start : cleaned.length);
-    label = label.replace(/^[\s\r\n]*\d{1,2}[:h]\d{2}/, ''); // heure éventuelle en tête
-    label = label.replace(/[\*\-•][\s\r\n]*$/, '').replace(/\s+/g, ' ').trim();
-    if(!label) return;
-    let year = todayUtc.getUTCFullYear();
-    let candidate = new Date(Date.UTC(year, mt.month - 1, mt.day));
-    while(candidate < todayUtc){ year++; candidate = new Date(Date.UTC(year, mt.month - 1, mt.day)); }
-    events.push({ date: isoDate(candidate), label });
-  });
-  events.sort((a, b) => (a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
-  return events;
 }
 // Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
 // avis) : chaque tranche entière correspond à un libellé, borne basse
@@ -603,20 +454,9 @@ function analysteBox(ticker, devise){
       <input type="date" class="consensusManuelDateInput" data-ticker="${ticker}" value="${consDate || ''}" title="Date du consensus telle qu'affichée sur la fiche source (ex. « au 18/08/26 » sur Boursorama)">
     </div>
     ${(objDate || consDate) ? `<div class="hist-hint" style="margin:0 0 2px;">${objDate ? 'Objectif au ' + frDate(objDate) : ''}${(objDate && consDate) ? ' · ' : ''}${consDate ? 'Consensus au ' + frDate(consDate) : ''}</div>` : ''}
-    ${objectifHistoriqueHtml(ticker, devise)}
     ${tier ? `<div class="hist-hint" style="margin:0 0 2px;">Échelle (note moyenne) : [1-2[ Acheter · [2-3[ Renforcer · [3-4[ Conserver · [4-5[ Alléger · [5-6[ Vendre</div>${gauge}` : ''}
     ${autresObjectifsHtml(ticker, devise)}
   </div>`;
-}
-
-// Historique discret des anciens objectifs de cours (3 mois) saisis à la
-// main — affiché juste sous le champ actuel, avec un bouton pour retirer une
-// entrée archivée par erreur (ex. simple correction de faute de frappe).
-function objectifHistoriqueHtml(ticker, devise){
-  const list = loadObjectifManuelHistorique()[ticker] || [];
-  if(!list.length) return '';
-  const items = list.map((h, i) => `<span style="white-space:nowrap;">${h.date ? frDate(h.date) : '(date inconnue)'} : <b>${fmtPrix(h.value)} ${devise}</b> <button class="hist-reset" data-action="remove-objectif-manuel-historique" data-ticker="${ticker}" data-index="${i}" style="margin:0; padding:0 4px;" title="Retirer cette entrée de l'historique">✕</button></span>`).join(' · ');
-  return `<div class="hist-hint" style="margin:0 0 2px;">Historique des objectifs : ${items}</div>`;
 }
 
 // Nom affiché de la valeur : le backend devine un nom pour la plupart des
@@ -1044,132 +884,6 @@ function daysBetweenIso(a, b){
   return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000);
 }
 
-// Agenda (résultats + dividende) : rassemble les dates à venir connues pour
-// une valeur, à partir des champs renvoyés par l'API (`prochaine_publication_
-// resultats`, nouveau champ, et `dividendes.prochaine_date_versement`, déjà
-// renvoyé mais jamais affiché jusqu'ici). Les deux peuvent être absents
-// (plan API, valeur non couverte) : dans ce cas la valeur n'apparaît
-// simplement pas dans l'agenda, sans erreur.
-function ticketAgendaEvents(ticker, raw){
-  const todayStr = isoDate(new Date());
-  const events = [];
-  const safeRaw = (raw && !raw.error) ? raw : null;
-  const apiNom = safeRaw ? safeRaw.nom : null;
-
-  // La saisie manuelle (voir agendaManuelBox) prime toujours sur la donnée
-  // API quand les deux existent — utile tant que le plan API ne fournit pas
-  // ces deux champs (ex. endpoints FMP "dividends"/"earnings" en 402 sur un
-  // plan gratuit/Starter), et disponible même si la fiche est en échec API.
-  const earningsManuel = loadEarningsDateManuel()[ticker];
-  const earningsDate = earningsManuel || (safeRaw ? safeRaw.prochaine_publication_resultats : null);
-  if(earningsDate && daysBetweenIso(todayStr, earningsDate) >= 0){
-    events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: 'Publication de résultats', date: earningsDate, manuel: !!earningsManuel });
-  }
-
-  const dividendeManuel = loadDividendeDateManuel()[ticker];
-  const divDate = dividendeManuel || (safeRaw && safeRaw.dividendes ? safeRaw.dividendes.prochaine_date_versement : null);
-  if(divDate && daysBetweenIso(todayStr, divDate) >= 0){
-    events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate, manuel: !!dividendeManuel });
-  }
-
-  // Calendrier complet collé depuis Boursorama (voir parseAgendaBoursoramaPaste) :
-  // peut apporter plusieurs événements futurs d'un coup, chacun avec son
-  // libellé d'origine (ex. "Résultats du 1er semestre", "Chiffre d'affaires
-  // 3ème trimestre") plutôt que le libellé générique ci-dessus.
-  (loadAgendaCalendrierManuel()[ticker] || []).forEach(ev => {
-    if(ev && ev.date && daysBetweenIso(todayStr, ev.date) >= 0){
-      events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: ev.label, date: ev.date, manuel: true });
-    }
-  });
-
-  return events;
-}
-
-// Saisie manuelle des dates d'agenda — disponible aussi bien sur une fiche
-// chargée normalement que sur une fiche en échec API (comme analysteBox),
-// puisqu'elle ne dépend d'aucune donnée renvoyée par le backend.
-function agendaManuelBox(ticker){
-  const earningsDate = loadEarningsDateManuel()[ticker];
-  const dividendeDate = loadDividendeDateManuel()[ticker];
-  const calendrier = loadAgendaCalendrierManuel()[ticker] || [];
-  const pasteOpen = state.agendaPasteOpenFor.has(ticker);
-  const calendrierList = calendrier.length
-    ? `<div class="hist-hint" style="margin:6px 0 0;">${calendrier.map(ev => `${frDate(ev.date)} — ${escapeHtml(ev.label)}`).join('<br>')}</div>
-       <button class="hist-reset" data-action="clear-agenda-calendrier" data-ticker="${ticker}" style="margin-top:6px;">Effacer le calendrier collé</button>`
-    : '';
-  return `<div class="hist-block">
-    <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">📅 Agenda — saisie manuelle</div>
-    <div class="hist-source">
-      <span style="min-width:190px;">Prochains résultats :</span>
-      <input type="date" class="earningsDateManuelInput" data-ticker="${ticker}" value="${earningsDate || ''}">
-    </div>
-    <div class="hist-source">
-      <span style="min-width:190px;">Prochain dividende :</span>
-      <input type="date" class="dividendeDateManuelInput" data-ticker="${ticker}" value="${dividendeDate || ''}">
-    </div>
-    <p class="hist-hint" style="margin:4px 0 0;">Votre plan API actuel ne fournit pas ces dates automatiquement — renseignez-les ici si vous les connaissez (ex. depuis la fiche Boursorama) ; une date saisie ici prime toujours sur celle de l'API.</p>
-    <button class="hist-toggle${pasteOpen ? ' open' : ''}" data-action="toggle-agenda-paste" data-ticker="${ticker}" style="margin-top:8px;">📋 ${calendrier.length ? 'Modifier le calendrier collé depuis Boursorama' : 'Coller le calendrier des publications (Boursorama)'}<span class="chevron">›</span></button>
-    <div ${pasteOpen ? '' : 'hidden'}>
-      <p class="hist-hint">Sur la fiche Boursorama de la valeur, repérez le bloc « Événements à venir », sélectionnez-le et collez-le ci-dessous tel quel (résultats semestriels/annuels, chiffre d'affaires trimestriel...) : toutes les dates à venir qu'il contient sont reconnues et ajoutées d'un coup, avec leur libellé d'origine.</p>
-      <div class="hist-paste-row">
-        <textarea class="agenda-paste" data-ticker="${ticker}" placeholder="Collez ici le bloc « Événements à venir » copié depuis Boursorama"></textarea>
-        <button data-action="parse-agenda-paste" data-ticker="${ticker}">Analyser</button>
-      </div>
-      <div class="agenda-paste-result hist-hint" data-ticker="${ticker}"></div>
-      ${calendrierList}
-    </div>
-  </div>`;
-}
-
-function whenLabel(dateIso){
-  const n = daysBetweenIso(isoDate(new Date()), dateIso);
-  if(n === 0) return "aujourd'hui";
-  if(n === 1) return 'demain';
-  return `dans ${n} jours`;
-}
-
-// Ligne compacte affichée directement sur la fiche d'une valeur (sous les
-// autres informations) quand au moins une date à venir est connue pour elle.
-function agendaLine(ticker, raw){
-  const events = ticketAgendaEvents(ticker, raw);
-  if(!events.length) return '';
-  const parts = events.map(ev => `${ev.icon} ${ev.label} le ${frDate(ev.date)} (${whenLabel(ev.date)})${ev.manuel ? ' <span style="color:var(--ink-muted);">(saisi)</span>' : ''}`);
-  return `<div class="kv" style="margin-top:2px;"><span style="font-size:.78rem; color:var(--ink-2);">${parts.join(' · ')}</span></div>`;
-}
-
-// Agrège les événements de toutes les valeurs suivies pour le panneau
-// "Agenda" global, triés par date la plus proche d'abord.
-function collectAgendaEvents(){
-  const events = [];
-  state.tickers.forEach(t => {
-    const entry = state.data[t];
-    const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
-    events.push(...ticketAgendaEvents(t, raw));
-  });
-  events.sort((a, b) => (a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
-  return events;
-}
-
-function renderAgenda(){
-  const el = document.getElementById('agendaContent');
-  if(!el) return;
-  const events = collectAgendaEvents();
-  if(!events.length){
-    el.innerHTML = '<p class="hist-hint">Aucune date à venir pour le moment. Selon votre plan API, le calendrier de résultats et les dates de dividende peuvent ne pas être fournis automatiquement — vous pouvez alors les renseigner vous-même dans le bloc « 📅 Agenda — saisie manuelle » de chaque fiche.</p>';
-    return;
-  }
-  const nomManuelMap = loadNomManuel();
-  const rows = events.map(ev => {
-    const nom = nomManuelMap[ev.ticker] || ev.apiNom || null;
-    return `<tr>
-      <td>${frDate(ev.date)}<br><span style="font-size:.72rem; color:var(--ink-muted);">${whenLabel(ev.date)}</span></td>
-      <td>${ev.icon} ${ev.label}${ev.manuel ? ' <span style="font-size:.72rem; color:var(--ink-muted);">(saisi)</span>' : ''}</td>
-      <td><b>${nom ? escapeHtml(nom) : ev.ticker}</b>${nom ? '<br><span style="color:var(--ink-muted);">' + ev.ticker + '</span>' : ''}</td>
-    </tr>`;
-  }).join('');
-  el.innerHTML = `<div style="overflow-x:auto;"><table class="hist-table"><thead><tr><th>Date</th><th>Événement</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
 // Échappement HTML — Sécurité des données : tout ce qui est affiché dans
 // l'interface et provient d'une saisie libre (nom affiché d'une valeur,
 // ticker si jamais il contenait des caractères inattendus) ou d'une source
@@ -1261,40 +975,6 @@ function importAllData(jsonText){
     }
   }catch(e){ /* pas de liste de tickers dans l'export, rien à filtrer */ }
   return { ok:true, count: importKeys.length, rejectedTickers };
-}
-
-// Récupère, depuis une ANCIENNE sauvegarde (export .json généré par ce
-// widget), les objectifs de cours (3 mois) qu'elle contient pour les ajouter
-// à l'historique (voir objectifManuelHistorique) — contrairement à
-// importAllData ci-dessus, ceci FUSIONNE sans rien remplacer : la valeur et
-// la date actuellement actives sur cet appareil ne sont jamais touchées,
-// seul l'historique est complété. Un objectif sans date dans la sauvegarde
-// est ignoré plutôt que daté arbitrairement (on ne peut pas savoir depuis
-// quand il était valable).
-function importObjectifHistoriqueFromBackup(jsonText){
-  let parsed;
-  try{ parsed = JSON.parse(jsonText); }
-  catch(e){ return { ok:false, error: "Fichier JSON invalide (pas un export valide)." }; }
-  const data = parsed && parsed.data;
-  if(!data || typeof data !== 'object') return { ok:false, error: "Format de fichier non reconnu (attendu : un export généré par ce widget)." };
-  let objectifs = {}, dates = {};
-  try{ objectifs = JSON.parse(data['stockAdvice.objectifManuel'] || '{}'); }catch(e){}
-  try{ dates = JSON.parse(data['stockAdvice.objectifManuelDate'] || '{}'); }catch(e){}
-  if(!objectifs || typeof objectifs !== 'object' || !Object.keys(objectifs).length){
-    return { ok:false, error: "Aucun objectif de cours trouvé dans ce fichier." };
-  }
-  const added = [], skipped = [];
-  Object.keys(objectifs).forEach(ticker => {
-    const value = objectifs[ticker];
-    const date = dates[ticker];
-    if(typeof value !== 'number' || isNaN(value)) return;
-    if(!date){ skipped.push(ticker); return; }
-    const before = (loadObjectifManuelHistorique()[ticker] || []).length;
-    addObjectifManuelHistorique(ticker, value, date);
-    const after = (loadObjectifManuelHistorique()[ticker] || []).length;
-    if(after > before) added.push(ticker);
-  });
-  return { ok:true, added, skipped };
 }
 
 // Calcule, pour chaque période, la variation % et les plus haut/bas à
@@ -1899,23 +1579,6 @@ function positionNote(pnlPct, conseil){
   return null;
 }
 
-// Clarification de l'avis (badge) : "Conserver" est de loin le cas le plus
-// fréquent par construction — decision_conseil() (backend) n'affiche
-// "Acheter" ou "Vendre" que si TROIS conditions sont réunies EN MÊME TEMPS
-// (score global, RSI et tonalité des actualités), sinon il retombe toujours
-// sur "Conserver". Plutôt que de modifier ces seuils (non demandé, et
-// risqué sans recul sur des données réelles), on clarifie juste l'affichage :
-// une info-bulle sur le badge explique la règle, et le score global brut est
-// affiché à côté pour une lecture plus fine que le seul badge à 3 valeurs.
-function conseilTooltip(d){
-  const g = d.scoring && d.scoring.global;
-  const rsi = d.technique && d.technique.rsi14;
-  const tonalite = (d.sentiment && d.sentiment.tonalite_actualites) || '—';
-  const gTxt = (g !== null && g !== undefined) ? fmt(g, 2) + '/10' : '—';
-  const rsiTxt = (rsi !== null && rsi !== undefined) ? fmt(rsi, 1) : '—';
-  return `Règle automatique du widget (pas un conseil personnalisé) : "Acheter" seulement si score ≥7/10 ET RSI <30 ET actualités positives, réunis en même temps ; "Vendre" seulement si score ≤3/10 ET RSI >70 ET actualités négatives, réunis en même temps ; "Conserver" dans tous les autres cas (de loin le plus fréquent). Ici : score ${gTxt}, RSI ${rsiTxt}, actualités ${tonalite}.`;
-}
-
 function apiBase(){ return document.getElementById('apiBase').value.replace(/\/$/, ''); }
 
 async function checkHealth(){
@@ -2004,8 +1667,6 @@ function cardContent(ticker, d, alertMsgs){
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
       <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : nom, lien vers la fiche, séances, objectif de cours, consensus, éligibilité PEA et dividendes.</p>
-      ${agendaLine(ticker, d)}
-      ${agendaManuelBox(ticker)}
       ${analysteBox(ticker, deviseGuess)}
       ${peaBox(ticker, null)}
       ${dividendBox(ticker, deviseGuess)}
@@ -2019,11 +1680,7 @@ function cardContent(ticker, d, alertMsgs){
   const alertsHtml = (alertMsgs && alertMsgs.length)
     ? alertMsgs.map(a=>`<div class="alertbox">${escapeHtml(a.message)}</div>`).join('')
     : '';
-  // d.source_bascule_api est vrai quand FMP (source de cours prioritaire côté
-  // backend) n'a pas répondu et que Yahoo Finance a été utilisé en secours —
-  // c'est donc FMP qui est indisponible, pas Yahoo (le texte précédent disait
-  // l'inverse, corrigé ici).
-  const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : source principale (FMP) indisponible, Yahoo Finance utilisé en secours pour le cours.</div>` : '';
+  const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : Yahoo Finance indisponible, données de repli utilisées.</div>` : '';
   const devise = currencySymbol(d.devise);
   const nomManuel = escapeHtml(loadNomManuel()[ticker]);
   const costBasis = loadCostBasis()[ticker];
@@ -2117,15 +1774,13 @@ function cardContent(ticker, d, alertMsgs){
         <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
       </div>
     </div>
-    <span class="badge ${d.conseil}" title="${escapeHtml(conseilTooltip(d))}">${d.conseil}</span><span style="font-size:.72rem; color:var(--ink-muted); margin-left:5px; cursor:help;" title="${escapeHtml(conseilTooltip(d))}">score ${d.scoring && d.scoring.global!==null && d.scoring.global!==undefined ? fmt(d.scoring.global,2)+'/10' : '—'} ⓘ</span>
+    <span class="badge ${d.conseil}">${d.conseil}</span>
     <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b>${d.niveau_risque}/10</b></span>
       <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+escapeHtml(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
-    ${agendaLine(ticker, d)}
-    ${agendaManuelBox(ticker)}
     ${analysteBox(ticker, devise)}
     ${peaBox(ticker, d.eligibilite_pea)}
     ${dividendBox(ticker, devise)}
@@ -2215,7 +1870,6 @@ function render(){
     if(cb) cb.checked = true;
   });
   updateCompareBar();
-  renderAgenda();
 }
 
 async function loadTicker(ticker){
@@ -2506,7 +2160,7 @@ function buildCompareTableHtml(tickers){
       <td>${cours !== null && cours !== undefined ? fmtPrix(cours)+' '+deviseTxt : '—'}</td>
       <td>${metrics.dailyVarPct !== null && metrics.dailyVarPct !== undefined ? pctSpan(metrics.dailyVarPct) : '—'}</td>
       <td>${metrics.weeklyVarPct !== null && metrics.weeklyVarPct !== undefined ? pctSpan(metrics.weeklyVarPct) : '—'}</td>
-      <td>${raw && raw.conseil ? `<span class="badge ${raw.conseil}" title="${escapeHtml(conseilTooltip(raw))}">${raw.conseil}</span>` : '—'}</td>
+      <td>${raw && raw.conseil ? `<span class="badge ${raw.conseil}">${raw.conseil}</span>` : '—'}</td>
       <td>${tier ? `<b style="color:${tier.color}">${tier.label}</b>` : '—'}</td>
       <td>${objectifRetenu !== null && objectifRetenu !== undefined ? fmtPrix(objectifRetenu)+' '+deviseTxt + (potentielPct!==null && potentielPct!==undefined ? ' ('+pctSpan(potentielPct)+')':'') : '—'}</td>
       <td>${raw && raw.niveau_risque !== undefined ? raw.niveau_risque+'/10' : '—'}</td>
@@ -2637,31 +2291,6 @@ document.getElementById('importDataFile').addEventListener('change', e => {
   e.target.value = '';
 });
 
-document.getElementById('importObjectifHistoriqueBtn').addEventListener('click', () => {
-  document.getElementById('importObjectifHistoriqueFile').click();
-});
-
-document.getElementById('importObjectifHistoriqueFile').addEventListener('change', e => {
-  const file = e.target.files && e.target.files[0];
-  const resultEl = document.getElementById('importObjectifHistoriqueResult');
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const result = importObjectifHistoriqueFromBackup(String(reader.result));
-    if(result.ok){
-      const addedTxt = result.added.length ? `${result.added.length} objectif(s) ajouté(s) à l'historique (${result.added.join(', ')})` : "Aucun nouvel objectif ajouté (déjà présents dans l'historique, ou aucune date exploitable)";
-      const skippedTxt = result.skipped.length ? ` · ${result.skipped.length} valeur(s) ignorée(s) faute de date connue dans le fichier (${result.skipped.join(', ')})` : '';
-      resultEl.textContent = `✅ ${addedTxt}${skippedTxt}.`;
-      render();
-    } else {
-      resultEl.textContent = `❌ ${result.error}`;
-    }
-  };
-  reader.onerror = () => { resultEl.textContent = '❌ Impossible de lire ce fichier.'; };
-  reader.readAsText(file);
-  e.target.value = '';
-});
-
 document.getElementById('grid').addEventListener('click', async e => {
   const btn = e.target.closest('[data-action="copy-verif"]');
   if(!btn) return;
@@ -2696,13 +2325,6 @@ document.getElementById('askToggle').addEventListener('click', e => {
   panel.hidden = !panel.hidden;
   e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
   if(!panel.hidden) document.getElementById('askQuestion').focus();
-});
-
-document.getElementById('agendaToggle').addEventListener('click', e => {
-  const panel = document.getElementById('agendaPanel');
-  panel.hidden = !panel.hidden;
-  e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
-  if(!panel.hidden) renderAgenda();
 });
 
 document.getElementById('dailyUpdateToggle').addEventListener('click', e => {
@@ -2887,18 +2509,6 @@ document.getElementById('grid').addEventListener('change', e => {
     render();
     return;
   }
-  const earningsDateInput = e.target.closest('.earningsDateManuelInput');
-  if(earningsDateInput){
-    saveEarningsDateManuel(earningsDateInput.dataset.ticker, earningsDateInput.value || null);
-    render();
-    return;
-  }
-  const dividendeDateInput = e.target.closest('.dividendeDateManuelInput');
-  if(dividendeDateInput){
-    saveDividendeDateManuel(dividendeDateInput.dataset.ticker, dividendeDateInput.value || null);
-    render();
-    return;
-  }
 });
 document.getElementById('grid').addEventListener('change', e => {
   const peaInput = e.target.closest('.peaManuelCheckbox');
@@ -2921,12 +2531,6 @@ document.getElementById('grid').addEventListener('click', e => {
   const rmObjBtn = e.target.closest('[data-action="remove-objectif-analyste"]');
   if(rmObjBtn){
     removeObjectifAnalyste(rmObjBtn.dataset.ticker, Number(rmObjBtn.dataset.index));
-    render();
-    return;
-  }
-  const rmObjHistBtn = e.target.closest('[data-action="remove-objectif-manuel-historique"]');
-  if(rmObjHistBtn){
-    removeObjectifManuelHistorique(rmObjHistBtn.dataset.ticker, Number(rmObjHistBtn.dataset.index));
     render();
     return;
   }
@@ -2969,34 +2573,6 @@ document.getElementById('grid').addEventListener('click', e => {
   const rmExcBtn = e.target.closest('[data-action="remove-dividende-exceptionnel"]');
   if(rmExcBtn){
     removeDividendeExceptionnel(rmExcBtn.dataset.ticker, Number(rmExcBtn.dataset.index));
-    render();
-    return;
-  }
-  const toggleAgendaPasteBtn = e.target.closest('[data-action="toggle-agenda-paste"]');
-  if(toggleAgendaPasteBtn){
-    const t = toggleAgendaPasteBtn.dataset.ticker;
-    if(state.agendaPasteOpenFor.has(t)) state.agendaPasteOpenFor.delete(t); else state.agendaPasteOpenFor.add(t);
-    render();
-    return;
-  }
-  const parseAgendaBtn = e.target.closest('[data-action="parse-agenda-paste"]');
-  if(parseAgendaBtn){
-    const t = parseAgendaBtn.dataset.ticker;
-    const textEl = document.querySelector(`.agenda-paste[data-ticker="${t}"]`);
-    const events = parseAgendaBoursoramaPaste(textEl ? textEl.value : '');
-    if(!events.length){
-      const resultEl = document.querySelector(`.agenda-paste-result[data-ticker="${t}"]`);
-      if(resultEl) resultEl.textContent = "⚠️ Aucun événement reconnu — vérifiez que vous avez bien collé le bloc « Événements à venir » complet.";
-      return;
-    }
-    saveAgendaCalendrierManuel(t, events);
-    state.agendaPasteOpenFor.add(t);
-    render();
-    return;
-  }
-  const clearAgendaBtn = e.target.closest('[data-action="clear-agenda-calendrier"]');
-  if(clearAgendaBtn){
-    saveAgendaCalendrierManuel(clearAgendaBtn.dataset.ticker, null);
     render();
     return;
   }
