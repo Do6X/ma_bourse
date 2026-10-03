@@ -214,7 +214,7 @@
 
   <div id="agendaPanel" class="config" hidden style="margin-bottom:14px;">
     <label style="display:block; margin-bottom:6px; font-weight:600;">📅 Agenda — prochains événements</label>
-    <p class="hist-hint">Prochaine publication de résultats et prochain versement de dividende, pour toutes vos valeurs suivies, triés par date la plus proche. Ces dates sont récupérées automatiquement par le backend quand son plan API les fournit (certaines valeurs, notamment hors États-Unis, peuvent rester incomplètes selon le plan en cours) — vérifiez toujours la date exacte sur la fiche de la valeur avant d'agir en conséquence.</p>
+    <p class="hist-hint">Prochaine publication de résultats et prochain versement de dividende, pour toutes vos valeurs suivies, triés par date la plus proche. Ces dates sont récupérées automatiquement par le backend quand son plan API les fournit — ce qui n'est actuellement pas le cas pour ces deux informations avec votre plan (quelle que soit la valeur, y compris américaine). Vous pouvez les renseigner vous-même dans le bloc « 📅 Agenda — saisie manuelle » de chaque fiche : une date saisie à la main prime alors toujours sur celle de l'API et apparaît ici marquée « (saisi) ». Vérifiez toujours la date exacte sur la fiche source avant d'agir en conséquence.</p>
     <div id="agendaContent"></div>
   </div>
 
@@ -360,6 +360,27 @@ function saveConsensusManuelDate(ticker, date){
   const store = loadConsensusManuelDate();
   if(!date) delete store[ticker]; else store[ticker] = date;
   try{ localStorage.setItem('stockAdvice.consensusManuelDate', JSON.stringify(store)); }catch(e){}
+}
+// Dates d'agenda saisies à la main (résultats, dividende) : repli tant que
+// le plan API ne fournit pas ces informations (voir ticketAgendaEvents, qui
+// leur donne toujours priorité sur la donnée API quand les deux existent).
+// Contrairement à l'objectif/consensus, la valeur saisie EST directement une
+// date (pas de champ numérique séparé).
+function loadEarningsDateManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.earningsDateManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveEarningsDateManuel(ticker, date){
+  const store = loadEarningsDateManuel();
+  if(!date) delete store[ticker]; else store[ticker] = date;
+  try{ localStorage.setItem('stockAdvice.earningsDateManuel', JSON.stringify(store)); }catch(e){}
+}
+function loadDividendeDateManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.dividendeDateManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveDividendeDateManuel(ticker, date){
+  const store = loadDividendeDateManuel();
+  if(!date) delete store[ticker]; else store[ticker] = date;
+  try{ localStorage.setItem('stockAdvice.dividendeDateManuel', JSON.stringify(store)); }catch(e){}
 }
 // Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
 // avis) : chaque tranche entière correspond à un libellé, borne basse
@@ -905,19 +926,48 @@ function daysBetweenIso(a, b){
 // (plan API, valeur non couverte) : dans ce cas la valeur n'apparaît
 // simplement pas dans l'agenda, sans erreur.
 function ticketAgendaEvents(ticker, raw){
-  if(!raw || raw.error) return [];
   const todayStr = isoDate(new Date());
   const events = [];
-  const apiNom = raw.nom || null;
-  const earningsDate = raw.prochaine_publication_resultats;
+  const safeRaw = (raw && !raw.error) ? raw : null;
+  const apiNom = safeRaw ? safeRaw.nom : null;
+
+  // La saisie manuelle (voir agendaManuelBox) prime toujours sur la donnée
+  // API quand les deux existent — utile tant que le plan API ne fournit pas
+  // ces deux champs (ex. endpoints FMP "dividends"/"earnings" en 402 sur un
+  // plan gratuit/Starter), et disponible même si la fiche est en échec API.
+  const earningsManuel = loadEarningsDateManuel()[ticker];
+  const earningsDate = earningsManuel || (safeRaw ? safeRaw.prochaine_publication_resultats : null);
   if(earningsDate && daysBetweenIso(todayStr, earningsDate) >= 0){
-    events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: 'Publication de résultats', date: earningsDate });
+    events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: 'Publication de résultats', date: earningsDate, manuel: !!earningsManuel });
   }
-  const divDate = raw.dividendes && raw.dividendes.prochaine_date_versement;
+
+  const dividendeManuel = loadDividendeDateManuel()[ticker];
+  const divDate = dividendeManuel || (safeRaw && safeRaw.dividendes ? safeRaw.dividendes.prochaine_date_versement : null);
   if(divDate && daysBetweenIso(todayStr, divDate) >= 0){
-    events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate });
+    events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate, manuel: !!dividendeManuel });
   }
+
   return events;
+}
+
+// Saisie manuelle des dates d'agenda — disponible aussi bien sur une fiche
+// chargée normalement que sur une fiche en échec API (comme analysteBox),
+// puisqu'elle ne dépend d'aucune donnée renvoyée par le backend.
+function agendaManuelBox(ticker){
+  const earningsDate = loadEarningsDateManuel()[ticker];
+  const dividendeDate = loadDividendeDateManuel()[ticker];
+  return `<div class="hist-block">
+    <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">📅 Agenda — saisie manuelle</div>
+    <div class="hist-source">
+      <span style="min-width:190px;">Prochains résultats :</span>
+      <input type="date" class="earningsDateManuelInput" data-ticker="${ticker}" value="${earningsDate || ''}">
+    </div>
+    <div class="hist-source">
+      <span style="min-width:190px;">Prochain dividende :</span>
+      <input type="date" class="dividendeDateManuelInput" data-ticker="${ticker}" value="${dividendeDate || ''}">
+    </div>
+    <p class="hist-hint" style="margin:4px 0 0;">Votre plan API actuel ne fournit pas ces dates automatiquement — renseignez-les ici si vous les connaissez (ex. depuis la fiche Boursorama) ; une date saisie ici prime toujours sur celle de l'API.</p>
+  </div>`;
 }
 
 function whenLabel(dateIso){
@@ -932,7 +982,7 @@ function whenLabel(dateIso){
 function agendaLine(ticker, raw){
   const events = ticketAgendaEvents(ticker, raw);
   if(!events.length) return '';
-  const parts = events.map(ev => `${ev.icon} ${ev.label} le ${frDate(ev.date)} (${whenLabel(ev.date)})`);
+  const parts = events.map(ev => `${ev.icon} ${ev.label} le ${frDate(ev.date)} (${whenLabel(ev.date)})${ev.manuel ? ' <span style="color:var(--ink-muted);">(saisi)</span>' : ''}`);
   return `<div class="kv" style="margin-top:2px;"><span style="font-size:.78rem; color:var(--ink-2);">${parts.join(' · ')}</span></div>`;
 }
 
@@ -954,7 +1004,7 @@ function renderAgenda(){
   if(!el) return;
   const events = collectAgendaEvents();
   if(!events.length){
-    el.innerHTML = '<p class="hist-hint">Aucune date à venir détectée automatiquement pour le moment. Le calendrier de résultats est une donnée récente côté backend (peut nécessiter que le backend soit à jour) ; les dates de dividende dépendent de ce que l\'API renvoie pour chaque valeur.</p>';
+    el.innerHTML = '<p class="hist-hint">Aucune date à venir pour le moment. Selon votre plan API, le calendrier de résultats et les dates de dividende peuvent ne pas être fournis automatiquement — vous pouvez alors les renseigner vous-même dans le bloc « 📅 Agenda — saisie manuelle » de chaque fiche.</p>';
     return;
   }
   const nomManuelMap = loadNomManuel();
@@ -962,7 +1012,7 @@ function renderAgenda(){
     const nom = nomManuelMap[ev.ticker] || ev.apiNom || null;
     return `<tr>
       <td>${frDate(ev.date)}<br><span style="font-size:.72rem; color:var(--ink-muted);">${whenLabel(ev.date)}</span></td>
-      <td>${ev.icon} ${ev.label}</td>
+      <td>${ev.icon} ${ev.label}${ev.manuel ? ' <span style="font-size:.72rem; color:var(--ink-muted);">(saisi)</span>' : ''}</td>
       <td><b>${nom ? escapeHtml(nom) : ev.ticker}</b>${nom ? '<br><span style="color:var(--ink-muted);">' + ev.ticker + '</span>' : ''}</td>
     </tr>`;
   }).join('');
@@ -1769,6 +1819,8 @@ function cardContent(ticker, d, alertMsgs){
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
       <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : nom, lien vers la fiche, séances, objectif de cours, consensus, éligibilité PEA et dividendes.</p>
+      ${agendaLine(ticker, d)}
+      ${agendaManuelBox(ticker)}
       ${analysteBox(ticker, deviseGuess)}
       ${peaBox(ticker, null)}
       ${dividendBox(ticker, deviseGuess)}
@@ -1888,6 +1940,7 @@ function cardContent(ticker, d, alertMsgs){
       <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+escapeHtml(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
     ${agendaLine(ticker, d)}
+    ${agendaManuelBox(ticker)}
     ${analysteBox(ticker, devise)}
     ${peaBox(ticker, d.eligibilite_pea)}
     ${dividendBox(ticker, devise)}
@@ -2621,6 +2674,18 @@ document.getElementById('grid').addEventListener('change', e => {
   const consDateInput = e.target.closest('.consensusManuelDateInput');
   if(consDateInput){
     saveConsensusManuelDate(consDateInput.dataset.ticker, consDateInput.value || null);
+    render();
+    return;
+  }
+  const earningsDateInput = e.target.closest('.earningsDateManuelInput');
+  if(earningsDateInput){
+    saveEarningsDateManuel(earningsDateInput.dataset.ticker, earningsDateInput.value || null);
+    render();
+    return;
+  }
+  const dividendeDateInput = e.target.closest('.dividendeDateManuelInput');
+  if(dividendeDateInput){
+    saveDividendeDateManuel(dividendeDateInput.dataset.ticker, dividendeDateInput.value || null);
     render();
     return;
   }
