@@ -272,7 +272,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), sortMode: 'alpha', compareSelected: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), sortMode: 'alpha', compareSelected: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -381,6 +381,69 @@ function saveDividendeDateManuel(ticker, date){
   const store = loadDividendeDateManuel();
   if(!date) delete store[ticker]; else store[ticker] = date;
   try{ localStorage.setItem('stockAdvice.dividendeDateManuel', JSON.stringify(store)); }catch(e){}
+}
+// Calendrier complet des publications collé depuis le bloc « Événements à
+// venir » d'une fiche Boursorama (résultats semestriels/annuels, chiffre
+// d'affaires trimestriel...) — un seul collage peut contenir plusieurs
+// événements futurs, contrairement au champ "Prochains résultats" ci-dessus
+// qui ne retient qu'une seule date. Les deux coexistent : utilisez celui qui
+// vous convient le mieux.
+function loadAgendaCalendrierManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.agendaCalendrierManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveAgendaCalendrierManuel(ticker, events){
+  const store = loadAgendaCalendrierManuel();
+  if(!events || !events.length) delete store[ticker]; else store[ticker] = events;
+  try{ localStorage.setItem('stockAdvice.agendaCalendrierManuel', JSON.stringify(store)); }catch(e){}
+}
+// Abréviations (et formes complètes) des mois en français telles
+// qu'utilisées par Boursorama dans son calendrier d'événements.
+const BOURSORAMA_MOIS = {
+  janv:1, jan:1, janvier:1, fevr:2, fev:2, fevrier:2, mars:3,
+  avr:4, avril:4, mai:5, juin:6, juil:7, juillet:7, aout:8,
+  sept:9, septembre:9, oct:10, octobre:10, nov:11, novembre:11, dec:12, decembre:12,
+};
+function normalizeAccents(s){
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+// Analyse le bloc « Événements à venir » collé depuis Boursorama. Les
+// liens copiés depuis une page web arrivent parfois au format Markdown
+// ("[17](https://...)") selon l'outil utilisé pour coller : on ne garde que
+// le texte visible. Le format exact (nombre de lignes par événement, retours
+// à la ligne) peut varier selon le navigateur/la méthode de copie, donc
+// plutôt que de découper en blocs de N lignes, on repère chaque occurrence
+// "jour + mois" dans le texte comme point d'ancrage, et tout ce qui suit
+// jusqu'à l'ancrage suivant (après avoir retiré une éventuelle heure du
+// type "00:00" en tête) devient le libellé de l'événement. Boursorama
+// n'affiche jamais l'année : on retient, pour chaque événement, la plus
+// proche occurrence future de ce jour/mois à partir d'aujourd'hui.
+function parseAgendaBoursoramaPaste(text, today){
+  today = today || new Date();
+  const cleaned = String(text || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  const anchorRe = /(\d{1,2})\s*[\r\n]*\s*([a-zA-Zéûô]{3,10})\.?/g;
+  const matches = [];
+  let m;
+  while((m = anchorRe.exec(cleaned)) !== null){
+    const monthKey = normalizeAccents(m[2]).toLowerCase();
+    const monthNum = BOURSORAMA_MOIS[monthKey];
+    const day = parseInt(m[1], 10);
+    if(!monthNum || !(day >= 1 && day <= 31)) continue;
+    matches.push({ day, month: monthNum, start: m.index, end: anchorRe.lastIndex });
+  }
+  const todayUtc = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+  const events = [];
+  matches.forEach((mt, i) => {
+    let label = cleaned.slice(mt.end, matches[i + 1] ? matches[i + 1].start : cleaned.length);
+    label = label.replace(/^[\s\r\n]*\d{1,2}[:h]\d{2}/, ''); // heure éventuelle en tête
+    label = label.replace(/[\*\-•][\s\r\n]*$/, '').replace(/\s+/g, ' ').trim();
+    if(!label) return;
+    let year = todayUtc.getUTCFullYear();
+    let candidate = new Date(Date.UTC(year, mt.month - 1, mt.day));
+    while(candidate < todayUtc){ year++; candidate = new Date(Date.UTC(year, mt.month - 1, mt.day)); }
+    events.push({ date: isoDate(candidate), label });
+  });
+  events.sort((a, b) => (a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
+  return events;
 }
 // Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
 // avis) : chaque tranche entière correspond à un libellé, borne basse
@@ -947,6 +1010,16 @@ function ticketAgendaEvents(ticker, raw){
     events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate, manuel: !!dividendeManuel });
   }
 
+  // Calendrier complet collé depuis Boursorama (voir parseAgendaBoursoramaPaste) :
+  // peut apporter plusieurs événements futurs d'un coup, chacun avec son
+  // libellé d'origine (ex. "Résultats du 1er semestre", "Chiffre d'affaires
+  // 3ème trimestre") plutôt que le libellé générique ci-dessus.
+  (loadAgendaCalendrierManuel()[ticker] || []).forEach(ev => {
+    if(ev && ev.date && daysBetweenIso(todayStr, ev.date) >= 0){
+      events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: ev.label, date: ev.date, manuel: true });
+    }
+  });
+
   return events;
 }
 
@@ -956,6 +1029,12 @@ function ticketAgendaEvents(ticker, raw){
 function agendaManuelBox(ticker){
   const earningsDate = loadEarningsDateManuel()[ticker];
   const dividendeDate = loadDividendeDateManuel()[ticker];
+  const calendrier = loadAgendaCalendrierManuel()[ticker] || [];
+  const pasteOpen = state.agendaPasteOpenFor.has(ticker);
+  const calendrierList = calendrier.length
+    ? `<div class="hist-hint" style="margin:6px 0 0;">${calendrier.map(ev => `${frDate(ev.date)} — ${escapeHtml(ev.label)}`).join('<br>')}</div>
+       <button class="hist-reset" data-action="clear-agenda-calendrier" data-ticker="${ticker}" style="margin-top:6px;">Effacer le calendrier collé</button>`
+    : '';
   return `<div class="hist-block">
     <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">📅 Agenda — saisie manuelle</div>
     <div class="hist-source">
@@ -967,6 +1046,16 @@ function agendaManuelBox(ticker){
       <input type="date" class="dividendeDateManuelInput" data-ticker="${ticker}" value="${dividendeDate || ''}">
     </div>
     <p class="hist-hint" style="margin:4px 0 0;">Votre plan API actuel ne fournit pas ces dates automatiquement — renseignez-les ici si vous les connaissez (ex. depuis la fiche Boursorama) ; une date saisie ici prime toujours sur celle de l'API.</p>
+    <button class="hist-toggle${pasteOpen ? ' open' : ''}" data-action="toggle-agenda-paste" data-ticker="${ticker}" style="margin-top:8px;">📋 ${calendrier.length ? 'Modifier le calendrier collé depuis Boursorama' : 'Coller le calendrier des publications (Boursorama)'}<span class="chevron">›</span></button>
+    <div ${pasteOpen ? '' : 'hidden'}>
+      <p class="hist-hint">Sur la fiche Boursorama de la valeur, repérez le bloc « Événements à venir », sélectionnez-le et collez-le ci-dessous tel quel (résultats semestriels/annuels, chiffre d'affaires trimestriel...) : toutes les dates à venir qu'il contient sont reconnues et ajoutées d'un coup, avec leur libellé d'origine.</p>
+      <div class="hist-paste-row">
+        <textarea class="agenda-paste" data-ticker="${ticker}" placeholder="Collez ici le bloc « Événements à venir » copié depuis Boursorama"></textarea>
+        <button data-action="parse-agenda-paste" data-ticker="${ticker}">Analyser</button>
+      </div>
+      <div class="agenda-paste-result hist-hint" data-ticker="${ticker}"></div>
+      ${calendrierList}
+    </div>
   </div>`;
 }
 
@@ -2753,6 +2842,34 @@ document.getElementById('grid').addEventListener('click', e => {
   const rmExcBtn = e.target.closest('[data-action="remove-dividende-exceptionnel"]');
   if(rmExcBtn){
     removeDividendeExceptionnel(rmExcBtn.dataset.ticker, Number(rmExcBtn.dataset.index));
+    render();
+    return;
+  }
+  const toggleAgendaPasteBtn = e.target.closest('[data-action="toggle-agenda-paste"]');
+  if(toggleAgendaPasteBtn){
+    const t = toggleAgendaPasteBtn.dataset.ticker;
+    if(state.agendaPasteOpenFor.has(t)) state.agendaPasteOpenFor.delete(t); else state.agendaPasteOpenFor.add(t);
+    render();
+    return;
+  }
+  const parseAgendaBtn = e.target.closest('[data-action="parse-agenda-paste"]');
+  if(parseAgendaBtn){
+    const t = parseAgendaBtn.dataset.ticker;
+    const textEl = document.querySelector(`.agenda-paste[data-ticker="${t}"]`);
+    const events = parseAgendaBoursoramaPaste(textEl ? textEl.value : '');
+    if(!events.length){
+      const resultEl = document.querySelector(`.agenda-paste-result[data-ticker="${t}"]`);
+      if(resultEl) resultEl.textContent = "⚠️ Aucun événement reconnu — vérifiez que vous avez bien collé le bloc « Événements à venir » complet.";
+      return;
+    }
+    saveAgendaCalendrierManuel(t, events);
+    state.agendaPasteOpenFor.add(t);
+    render();
+    return;
+  }
+  const clearAgendaBtn = e.target.closest('[data-action="clear-agenda-calendrier"]');
+  if(clearAgendaBtn){
+    saveAgendaCalendrierManuel(clearAgendaBtn.dataset.ticker, null);
     render();
     return;
   }
