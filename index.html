@@ -149,6 +149,16 @@
      que quand la fiche est explicitement ouverte en édition — jamais le
      contenu informatif (badges, montants calculés, historiques affichés). */
   .card:not(.edit-open) .edit-field{display:none !important;}
+  /* Checklist "à compléter" (saisie assistée d'une valeur nouvellement
+     ajoutée) : encart discret en haut de fiche, disparaît tout seul une fois
+     tous les champs renseignés (ou confirmés vides). */
+  .checklist-box{background:var(--warn-soft); border:1px solid var(--warn); border-radius:8px; padding:7px 10px; margin:8px 0; font-size:.78rem;}
+  .checklist-box-title{font-weight:600; color:var(--warn); margin-bottom:5px;}
+  .checklist-items{display:flex; flex-wrap:wrap; gap:6px;}
+  .checklist-item{display:inline-flex; align-items:center; gap:5px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:3px 7px;}
+  .checklist-item a{color:var(--warn); font-weight:600; text-decoration:none; cursor:pointer;}
+  .checklist-item a:hover{text-decoration:underline;}
+  .checklist-item label{display:flex; align-items:center; gap:3px; font-size:.7rem; color:var(--ink-muted); cursor:pointer; white-space:nowrap;}
   /* Rappel d'export affiché quand vous tentez de fermer/quitter la page (voir
      le gestionnaire "beforeunload" plus bas) : votre navigateur affichera
      d'abord sa propre boîte de dialogue native (texte imposé par le
@@ -204,6 +214,7 @@
     <button id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsPanel">⚙️ Réglages</button>
     <button id="askToggle" type="button" aria-expanded="false" aria-controls="askPanel">💬 Poser une question</button>
     <button id="agendaToggle" type="button" aria-expanded="false" aria-controls="agendaPanel">📅 Agenda</button>
+    <button id="archivesToggle" type="button" aria-expanded="false" aria-controls="archivesPanel">🗄️ Archives</button>
   </div>
 
   <div id="settingsPanel" class="config" hidden style="margin-bottom:14px;">
@@ -234,6 +245,8 @@
       <div id="dailyUpdatePanel" hidden style="margin-top:8px;">
         <p class="hist-hint">Pour chaque valeur, collez directement dans la case « Coller ici » la ligne correspondante copiée depuis la cote générale Boursorama (colonnes Dernier, Var., Ouv., +Haut, +Bas, Var. depuis le 1er janvier, Volume, séparées par des tabulations) — les colonnes se remplissent automatiquement dès le collage (le « (c) » à côté du cours de clôture est retiré automatiquement), corrigez si besoin, puis cliquez sur « Enregistrer tout » en bas du tableau. La date retenue est celle d'aujourd'hui pour toutes les valeurs.</p>
         <p class="hist-hint">Le « Var. » collé est indicatif : il est comparé à la variation recalculée automatiquement par le widget (à partir de votre dernière clôture enregistrée) et un écart notable est signalé après enregistrement, mais il ne remplace jamais ce calcul. Le volume est automatiquement converti en milliers.</p>
+        <label style="display:block; margin-bottom:6px; font-size:.82rem;"><input type="checkbox" id="dailyShowAllToggle"> Afficher aussi les valeurs déjà à jour</label>
+        <div id="dailyUpdateHint" class="hist-hint" style="margin-top:-4px;"></div>
         <div style="overflow-x:auto;">
         <table class="hist-table" id="dailyUpdateTable">
           <thead><tr>
@@ -259,6 +272,8 @@
       <div id="weeklyUpdatePanel" hidden style="margin-top:8px;">
         <p class="hist-hint">Complète le tableau quotidien ci-dessus : celui-ci reprend, pour <b>une valeur à la fois</b>, le tableau « Historique 5 jours » copié directement depuis SA fiche Boursorama (5 jours en colonnes) — pratique pour rattraper toute une semaine en un seul collage par valeur plutôt que jour par jour. Pour chaque valeur listée ci-dessous, ouvrez sa fiche, copiez son tableau « Historique 5 jours » et collez-le dans la case correspondante : les colonnes se remplissent automatiquement (dates réelles comprises), corrigez si besoin, puis cliquez sur « Enregistrer cette semaine ».</p>
         <p class="hist-hint">Le « Var. » collé est indicatif, comme pour le tableau quotidien : il ne remplace jamais la variation recalculée automatiquement à partir de vos clôtures déjà enregistrées. Le volume est automatiquement converti en milliers.</p>
+        <label style="display:block; margin-bottom:6px; font-size:.82rem;"><input type="checkbox" id="weeklyShowAllToggle"> Afficher aussi les valeurs déjà à jour</label>
+        <div id="weeklyUpdateHint" class="hist-hint" style="margin-top:-4px;"></div>
         <div id="weeklyUpdateBody"></div>
       </div>
     </div>
@@ -279,6 +294,12 @@
     <label style="display:block; margin-bottom:6px; font-weight:600;">📅 Agenda — prochains événements</label>
     <p class="hist-hint">Prochaine publication de résultats et prochain versement de dividende, pour toutes vos valeurs suivies, triés par date la plus proche. Ces dates sont récupérées automatiquement par le backend quand son plan API les fournit — ce qui n'est actuellement pas le cas pour ces deux informations avec votre plan (quelle que soit la valeur, y compris américaine). Vous pouvez les renseigner vous-même dans le bloc « 📅 Agenda — saisie manuelle » de chaque fiche : une date saisie à la main prime alors toujours sur celle de l'API et apparaît ici marquée « (saisi) ». Vérifiez toujours la date exacte sur la fiche source avant d'agir en conséquence.</p>
     <div id="agendaContent"></div>
+  </div>
+
+  <div id="archivesPanel" class="config" hidden style="margin-bottom:14px;">
+    <label style="display:block; margin-bottom:6px; font-weight:600;">🗄️ Valeurs archivées</label>
+    <p class="hist-hint">Une valeur archivée (bouton 🗄️ sur sa fiche) disparaît de la liste suivie — plus de mise à jour quotidienne/hebdomadaire à faire pour elle — mais toutes les données déjà saisies restent conservées. Réactivez-la ici à tout moment pour reprendre son suivi avec ces données (un trou dans l'historique des séances est à prévoir pour la période d'archivage).</p>
+    <div id="archivesPanelBody"></div>
   </div>
 
   <div class="config" style="margin-bottom:18px;">
@@ -351,7 +372,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set(), dailyShowAll: false, weeklyShowAll: false };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -659,13 +680,13 @@ function analysteBox(ticker, devise){
       ${[1,2,3,4,5].map(n => `<div style="flex:1; height:6px; border-radius:3px; background:${tierColors[n-1]}; opacity:${activeBucket===n ? '1' : '.28'};" title="${n}"></div>`).join('')}
     </div>` : '';
   return `<div class="hist-block">
-    <div class="hist-source edit-field">
+    <div class="hist-source edit-field" id="sec-${ticker}-objectif">
       <span style="min-width:190px;">Objectif de cours (3 mois) :</span>
       <input type="number" step="0.0001" class="objectifManuelInput" data-ticker="${ticker}" placeholder="ex. 18.50" value="${objManuel!==undefined && objManuel!==null ? objManuel : ''}">
       <span style="font-size:.72rem; color:var(--ink-muted);">${devise}</span>
       <input type="date" class="objectifManuelDateInput" data-ticker="${ticker}" value="${objDate || ''}" title="Date de l'objectif telle qu'affichée sur la fiche source (ex. Boursorama)">
     </div>
-    <div class="hist-source">
+    <div class="hist-source" id="sec-${ticker}-consensus">
       <span style="min-width:190px;">Consensus analystes :</span>
       <span class="edit-field" style="display:contents;"><input type="number" step="0.01" min="1" max="5" class="consensusManuelInput" data-ticker="${ticker}" placeholder="ex. 1.63" value="${consManuel!==undefined && consManuel!==null ? consManuel : ''}"></span>
       ${tier ? `<span style="font-size:.8rem; font-weight:600; padding:2px 8px; border-radius:6px; background:${tier.soft}; color:${tier.color};">${tier.label}</span>` : ''}
@@ -980,7 +1001,7 @@ function dividendBox(ticker, devise){
       </div>
     </div>` : '';
 
-  return `<div class="hist-block">
+  return `<div class="hist-block" id="sec-${ticker}-dividendes">
     <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">💶 Dividendes</div>
     ${savedTable}
     <div class="edit-field">
@@ -1175,7 +1196,7 @@ function agendaManuelBox(ticker){
     ? `<div class="hist-hint" style="margin:6px 0 0;">${calendrier.map(ev => `${frDate(ev.date)} — ${escapeHtml(ev.label)}`).join('<br>')}</div>
        <button class="hist-reset" data-action="clear-agenda-calendrier" data-ticker="${ticker}" style="margin-top:6px;">Effacer le calendrier collé</button>`
     : '';
-  return `<div class="hist-block edit-field">
+  return `<div class="hist-block edit-field" id="sec-${ticker}-agenda">
     <div style="font-weight:600; font-size:.85rem; margin-bottom:4px;">📅 Agenda — saisie manuelle</div>
     <div class="hist-source">
       <span style="min-width:190px;">Prochains résultats :</span>
@@ -1195,6 +1216,68 @@ function agendaManuelBox(ticker){
       </div>
       <div class="agenda-paste-result hist-hint" data-ticker="${ticker}"></div>
       ${calendrierList}
+    </div>
+  </div>`;
+}
+
+// Case "aucune information disponible" cochée pour un champ donné d'une
+// valeur (ex. pas de dividende connu pour cette société) : évite de la
+// faire apparaître indéfiniment dans la checklist "à compléter" ci-dessous
+// sans avoir à saisir une fausse valeur juste pour la faire disparaître.
+// Stocké à part (jamais mélangé aux données elles-mêmes) : {ticker: {champ: true}}.
+function loadChampsVides(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.champsVides') || '{}'); }catch(e){ return {}; }
+}
+function setChampVide(ticker, field, vide){
+  const store = loadChampsVides();
+  if(!store[ticker]) store[ticker] = {};
+  if(vide) store[ticker][field] = true; else delete store[ticker][field];
+  if(!Object.keys(store[ticker]).length) delete store[ticker];
+  try{ localStorage.setItem('stockAdvice.champsVides', JSON.stringify(store)); }catch(e){}
+}
+function isChampVide(ticker, field){
+  const store = loadChampsVides();
+  return !!(store[ticker] && store[ticker][field]);
+}
+
+// Liste des champs saisis à la main suivis par la checklist "à compléter"
+// (saisie assistée d'une valeur nouvellement ajoutée) — dans le même ordre
+// que celui où les rubriques correspondantes apparaissent sur une fiche
+// Boursorama, pour limiter les allers-retours lors de la saisie initiale.
+// Volontairement absents : le prix de revient (position personnelle, pas
+// systématique — une valeur suivie n'est pas forcément détenue) et
+// l'éligibilité PEA (déjà auto-estimée, avec sa propre case "confirmé par
+// vous" — un second mécanisme ferait doublon).
+const CHECKLIST_FIELDS = [
+  { key:'source', label:'Lien de la fiche source', anchor:'source',
+    isFilled: t => !!(loadSourceUrls()[t] && loadSourceUrls()[t].trim()) },
+  { key:'historique', label:'Historique des cours', anchor:'historique',
+    isFilled: t => { const e = loadHistoriqueStore()[t]; return !!(e && e.seances && e.seances.length); } },
+  { key:'objectif', label:'Objectif de cours (analystes)', anchor:'objectif',
+    isFilled: t => { const v = loadObjectifManuel()[t]; return v!==undefined && v!==null && !isNaN(v); } },
+  { key:'consensus', label:'Consensus analystes', anchor:'consensus',
+    isFilled: t => { const v = loadConsensusManuel()[t]; return v!==undefined && v!==null && !isNaN(v); } },
+  { key:'dividendes', label:'Dividendes', anchor:'dividendes',
+    isFilled: t => !!loadDividendes()[t] },
+  { key:'agenda', label:'Agenda (prochains événements)', anchor:'agenda',
+    isFilled: t => !!(loadEarningsDateManuel()[t] || loadDividendeDateManuel()[t] || (loadAgendaCalendrierManuel()[t]||[]).length) },
+];
+
+// Champs encore à compléter pour une valeur : ni remplis, ni confirmés vides.
+function checklistMissing(ticker){
+  return CHECKLIST_FIELDS.filter(f => !f.isFilled(ticker) && !isChampVide(ticker, f.key));
+}
+
+function checklistBox(ticker){
+  const missing = checklistMissing(ticker);
+  if(!missing.length) return '';
+  return `<div class="checklist-box">
+    <div class="checklist-box-title">🧩 À compléter (${missing.length})</div>
+    <div class="checklist-items">
+      ${missing.map(f => `<span class="checklist-item">
+        <a href="#" data-action="checklist-goto" data-ticker="${ticker}" data-field="${f.anchor}">${f.label}</a>
+        <label title="Confirmer qu'aucune information n'est disponible pour ce champ"><input type="checkbox" class="checklistEmptyCheckbox" data-ticker="${ticker}" data-field="${f.key}"> aucune info</label>
+      </span>`).join('')}
     </div>
   </div>`;
 }
@@ -1654,6 +1737,46 @@ function readDailyRow(ticker){
   };
 }
 
+// Dernière date de séance connue pour une valeur (toutes origines de
+// saisie confondues : fiche, tableau quotidien, tableau hebdomadaire) — ou
+// null si aucune séance n'a encore été enregistrée. Sert à décider si une
+// valeur a besoin d'être mise à jour, sans jamais toucher au seed ni aux
+// autres validations existantes.
+function lastSeanceDate(ticker){
+  const entry = loadHistoriqueStore()[ticker];
+  const seances = (entry && entry.seances) || [];
+  if(!seances.length) return null;
+  return seances.reduce((max, s) => (s.date > max ? s.date : max), seances[0].date);
+}
+// Dernier jour ouvré (lun-ven) à la date du jour — un samedi ou un
+// dimanche renvoie le vendredi précédent, pour ne pas réclamer une séance
+// du jour quand la bourse est fermée.
+function lastBusinessDayStr(){
+  const d = new Date();
+  const dow = d.getDay();
+  const delta = dow === 0 ? 2 : (dow === 6 ? 1 : 0);
+  d.setDate(d.getDate() - delta);
+  return isoDate(d);
+}
+function daysSinceDate(dateStr){
+  const d = new Date(dateStr + 'T00:00:00');
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today - d) / 86400000);
+}
+// "À jour" côté quotidien : une séance a déjà été enregistrée pour le
+// dernier jour ouvré. "À jour" côté hebdomadaire : plus tolérant (6 jours),
+// pour ne pas réafficher une valeur simplement parce qu'elle n'a pas encore
+// été mise à jour aujourd'hui même si elle l'a été il y a 2-3 jours.
+function isDailyUpToDate(ticker){
+  const last = lastSeanceDate(ticker);
+  return !!last && last >= lastBusinessDayStr();
+}
+function isWeeklyUpToDate(ticker){
+  const last = lastSeanceDate(ticker);
+  return !!last && daysSinceDate(last) <= 6;
+}
+
 // Une ligne par valeur suivie, avec sa propre case de collage — pas de
 // tableau à libellés comme pour l'historique/le dividende (une seule valeur
 // à la fois) puisqu'ici chaque VALEUR occupe sa propre ligne, remplie
@@ -1663,7 +1786,16 @@ function dailyUpdateRows(){
   if(!state.tickers.length){
     return `<tr><td colspan="9" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
   }
-  return state.tickers.map(t => {
+  const list = state.dailyShowAll ? state.tickers : state.tickers.filter(t => !isDailyUpToDate(t));
+  const hint = document.getElementById('dailyUpdateHint');
+  if(hint){
+    const hidden = state.tickers.length - list.length;
+    hint.textContent = hidden > 0 ? `${hidden} valeur${hidden>1?'s':''} déjà à jour masquée${hidden>1?'s':''}.` : '';
+  }
+  if(!list.length){
+    return `<tr><td colspan="9" style="color:var(--ink-muted); text-align:center;">Toutes les valeurs sont déjà à jour aujourd'hui 👍</td></tr>`;
+  }
+  return list.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
     const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || '');
@@ -1809,7 +1941,16 @@ function weeklyUpdateBlocks(){
   if(!state.tickers.length){
     return `<p class="hist-hint">Ajoutez une valeur pour commencer.</p>`;
   }
-  return state.tickers.map(t => {
+  const list = state.weeklyShowAll ? state.tickers : state.tickers.filter(t => !isWeeklyUpToDate(t));
+  const hint = document.getElementById('weeklyUpdateHint');
+  if(hint){
+    const hidden = state.tickers.length - list.length;
+    hint.textContent = hidden > 0 ? `${hidden} valeur${hidden>1?'s':''} déjà à jour masquée${hidden>1?'s':''}.` : '';
+  }
+  if(!list.length){
+    return `<p class="hist-hint">Toutes les valeurs sont déjà à jour 👍</p>`;
+  }
+  return list.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
     const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || '');
@@ -2153,7 +2294,7 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
   const sourceUrl = loadSourceUrls()[ticker] || '';
   const todayStr = isoDate(new Date());
 
-  const sourceRow = `<div class="hist-source">
+  const sourceRow = `<div class="hist-source" id="sec-${ticker}-source">
       <span class="edit-field" style="display:contents;"><input type="url" class="histSourceInput" data-ticker="${ticker}" placeholder="Lien de la fiche (ex. Boursorama) pour ${ticker}" value="${escapeHtml(sourceUrl)}"></span>
       ${sourceUrl && isHttpUrl(sourceUrl) ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Voir la fiche ↗</a>` : (sourceUrl ? `<span class="hist-hint" title="Ce lien ne commence pas par http(s):// et n'est donc pas affiché comme cliquable.">⚠ lien non reconnu</span>` : '')}
     </div>`;
@@ -2168,6 +2309,7 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
 
   if(!entry || !entry.seed){
     const open = state.histOpenForms.has(ticker);
+    const hasSeances = !!(entry && entry.seances && entry.seances.length);
     const rows = HIST_PERIODS.map(p => `
       <tr>
         <td>${p.label}</td>
@@ -2175,9 +2317,18 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
         <td><input type="number" step="0.0001" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="haut" placeholder="+ haut"></td>
         <td><input type="number" step="0.0001" class="histSeedInput" data-ticker="${ticker}" data-period="${p.key}" data-field="bas" placeholder="+ bas"></td>
       </tr>`).join('');
-    return `<div class="hist-block">
+    // Des séances peuvent déjà exister (ex. saisies via la mise à jour
+    // hebdomadaire) alors qu'aucune donnée de référence ("seed" — variations
+    // par période) n'a encore été validée : le graphique n'a besoin que des
+    // séances, donc on l'affiche déjà ici plutôt que d'attendre le seed —
+    // seul le tableau des variations par période (qui lui nécessite le
+    // seed) reste à venir.
+    const earlyChart = hasSeances
+      ? priceChartSvg(ticker, currentClose, devise, objectifRetenu)
+      : `<p class="hist-hint">📈 Le graphique apparaîtra ici une fois vos premières données saisies ci-dessous.</p>`;
+    return `<div class="hist-block" id="sec-${ticker}-historique">
       ${sourceRow}
-      <p class="hist-hint">📈 Le graphique apparaîtra ici une fois vos premières données saisies ci-dessous.</p>
+      ${earlyChart}
       <div class="edit-field">
         <button class="hist-toggle${open ? ' open' : ''}" data-action="toggle-hist-form" data-ticker="${ticker}">📋 Saisir les données historiques<span class="chevron">›</span></button>
         <div ${open ? '' : 'hidden'}>
@@ -2191,6 +2342,7 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
             <tbody>${rows}</tbody>
           </table>
           <div class="hist-preview" data-ticker="${ticker}"></div>
+          ${hasSeances ? `<p class="hist-hint">Des séances sont déjà enregistrées pour cette valeur : la date et les cours de la séance ci-dessous sont facultatifs — laissez-les vides pour simplement valider les variations par période.</p>` : ''}
           <div class="hist-seance-row">${seanceFields}</div>
           <button data-action="save-seed" data-ticker="${ticker}">Enregistrer</button>
         </div>
@@ -2236,7 +2388,7 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
     const cls = pnlPct > 0.5 ? 'up' : (pnlPct < -0.5 ? 'down' : 'flat');
     pnlLine = `<div class="position" style="margin-top:6px;"><div class="row">Plus/moins-value : <span class="pnl ${cls}">${pnlPct>0?'+':''}${fmt(pnlPct,2)}% (${pnlValeur>0?'+':''}${fmt(pnlValeur,2)} ${devise}/action)</span></div></div>`;
   }
-  return `<div class="hist-block">
+  return `<div class="hist-block" id="sec-${ticker}-historique">
     ${sourceRow}
     <table class="hist-table">
       <thead><tr><th>Période</th><th>Var.</th><th>+ Haut</th><th>+ Bas</th><th></th></tr></thead>
@@ -2380,21 +2532,23 @@ function cardContent(ticker, d, alertMsgs){
           <button class="remove" data-action="toggle-card-edit" data-ticker="${ticker}" title="Afficher/masquer les champs de saisie">⚙️</button>
           <button class="remove" onclick="renameTicker('${ticker}')" title="Saisir/modifier le nom affiché">✏️</button>
           <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
+          <button class="remove" onclick="archiveTicker('${ticker}')" title="Archiver (ne plus suivre, en conservant les données déjà saisies)">🗄️</button>
           <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
         </div>
       </div>
+      ${checklistBox(ticker)}
       ${priceLine}
       ${objectifLine}
       <div class="error">${escapeHtml(d.error.message) || 'Erreur inconnue.'}
         <button onclick="loadTicker('${ticker}')">Réessayer</button>
       </div>
       <p class="hist-hint" style="margin-top:8px;">L'analyse automatique n'est pas disponible pour cette valeur (backend en échec), mais vous pouvez continuer à la suivre à la main ci-dessous : nom, lien vers la fiche, séances, objectif de cours, consensus, éligibilité PEA et dividendes.</p>
+      ${peaBox(ticker, null)}
+      ${historiqueBox(ticker, cours, deviseGuess, hasObjManuel ? objManuel : null)}
+      ${analysteBox(ticker, deviseGuess)}
+      ${dividendBox(ticker, deviseGuess)}
       ${agendaLine(ticker, d)}
       ${agendaManuelBox(ticker)}
-      ${analysteBox(ticker, deviseGuess)}
-      ${peaBox(ticker, null)}
-      ${dividendBox(ticker, deviseGuess)}
-      ${historiqueBox(ticker, cours, deviseGuess, hasObjManuel ? objManuel : null)}
       ${verifBox(ticker)}
     </div>`;
   }
@@ -2501,9 +2655,11 @@ function cardContent(ticker, d, alertMsgs){
         <button class="remove" data-action="toggle-card-edit" data-ticker="${ticker}" title="Afficher/masquer les champs de saisie">⚙️</button>
         <button class="remove" onclick="renameTicker('${ticker}')" title="Saisir/modifier le nom affiché">✏️</button>
         <button class="remove" onclick="loadTicker('${ticker}')" title="Rafraîchir cette valeur">↻</button>
+        <button class="remove" onclick="archiveTicker('${ticker}')" title="Archiver (ne plus suivre, en conservant les données déjà saisies)">🗄️</button>
         <button class="remove" onclick="removeTicker('${ticker}')" title="Retirer cette valeur">✕</button>
       </div>
     </div>
+    ${checklistBox(ticker)}
     <span class="badge ${d.conseil}" title="${escapeHtml(conseilTooltip(d))}">${d.conseil}</span><span style="font-size:.72rem; color:var(--ink-muted); margin-left:5px; cursor:help;" title="${escapeHtml(conseilTooltip(d))}">score ${d.scoring && d.scoring.global!==null && d.scoring.global!==undefined ? fmt(d.scoring.global,2)+'/10' : '—'} ⓘ</span>
     <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}${weeklyTrendArrow(ticker, cours)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
@@ -2512,17 +2668,17 @@ function cardContent(ticker, d, alertMsgs){
       <span>Niveau de risque : <b style="color:${riskColor(d.niveau_risque)}">${d.niveau_risque}/10</b></span>
       <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+escapeHtml(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
     </div>
+    ${peaBox(ticker, d.eligibilite_pea)}
+    ${historiqueBox(ticker, cours, devise, objectifRetenu)}
+    ${analysteBox(ticker, devise)}
+    ${dividendBox(ticker, devise)}
     ${agendaLine(ticker, d)}
     ${agendaManuelBox(ticker)}
-    ${analysteBox(ticker, devise)}
-    ${peaBox(ticker, d.eligibilite_pea)}
-    ${dividendBox(ticker, devise)}
     ${positionBox}
     <div class="justif">${justif}</div>
     ${bascule}
     ${objectifNonFiable}
     ${alertsHtml}
-    ${historiqueBox(ticker, cours, devise, objectifRetenu)}
     ${verifBox(ticker)}
   </div>`;
 }
@@ -2637,6 +2793,83 @@ function removeTicker(ticker){
   refreshWeeklyUpdatePanelIfOpen();
 }
 
+// Archives : retirer une valeur du suivi actif SANS rien effacer de ses
+// données déjà saisies (séances, seed, objectif, consensus, dividendes,
+// PEA, prix de revient, agenda, lien source...) — exactement le même
+// retrait "doux" que removeTicker() ci-dessus (aucune de ces données n'est
+// stockée dans state.tickers, donc rien n'est perdu), simplement complété
+// d'une entrée dans stockAdvice.archivedTickers pour pouvoir la retrouver
+// et la réactiver plus tard. Si vous ressaisissez directement le même
+// ticker via le champ d'ajout plutôt que par "Réactiver" ci-dessous, les
+// anciennes données réapparaissent automatiquement de la même façon (voir
+// le nettoyage de l'entrée archivée dans le handler du bouton d'ajout).
+function loadArchivedTickers(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.archivedTickers') || '{}'); }catch(e){ return {}; }
+}
+function saveArchivedTickers(store){
+  try{ localStorage.setItem('stockAdvice.archivedTickers', JSON.stringify(store)); }catch(e){}
+}
+function unarchiveIfNeeded(ticker){
+  const store = loadArchivedTickers();
+  if(store[ticker]){ delete store[ticker]; saveArchivedTickers(store); }
+}
+function archiveTicker(ticker){
+  if(!confirm(`Archiver ${ticker} ? Elle disparaîtra de la liste suivie, mais toutes les données déjà saisies pour elle sont conservées et vous pourrez la réactiver plus tard (panneau « 🗄️ Archives »).`)) return;
+  state.tickers = state.tickers.filter(t => t !== ticker);
+  delete state.data[ticker];
+  state.compareSelected.delete(ticker);
+  const store = loadArchivedTickers();
+  store[ticker] = isoDate(new Date());
+  saveArchivedTickers(store);
+  persistTickers();
+  render();
+  refreshDailyUpdateTableIfOpen();
+  refreshWeeklyUpdatePanelIfOpen();
+  refreshArchivesPanelIfOpen();
+}
+function unarchiveTicker(ticker){
+  unarchiveIfNeeded(ticker);
+  if(!state.tickers.includes(ticker)) state.tickers.push(ticker);
+  persistTickers();
+  render();
+  refreshDailyUpdateTableIfOpen();
+  refreshWeeklyUpdatePanelIfOpen();
+  refreshArchivesPanelIfOpen();
+  loadTicker(ticker);
+}
+function archivesPanelRows(){
+  const store = loadArchivedTickers();
+  const tickers = Object.keys(store).sort((a,b) => store[b].localeCompare(store[a]));
+  if(!tickers.length){
+    return `<p class="hist-hint">Aucune valeur archivée pour le moment.</p>`;
+  }
+  const nomManuelMap = loadNomManuel();
+  return `<div style="display:flex; flex-direction:column; gap:6px;">
+    ${tickers.map(t => {
+      const nom = escapeHtml(nomManuelMap[t] || '');
+      const histEntry = loadHistoriqueStore()[t];
+      const nbSeances = histEntry && histEntry.seances ? histEntry.seances.length : 0;
+      return `<div class="hist-source" style="justify-content:space-between;">
+        <span>${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.78rem;">${t}</span> — archivée le ${frDate(store[t])}${nbSeances ? ` · ${nbSeances} séance(s) conservée(s)` : ''}</span>
+        <button data-action="unarchive-ticker" data-ticker="${t}">↩️ Réactiver</button>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function renderArchivesPanel(){
+  const body = document.getElementById('archivesPanelBody');
+  if(body) body.innerHTML = archivesPanelRows();
+}
+function refreshArchivesPanelIfOpen(){
+  const panel = document.getElementById('archivesPanel');
+  if(panel && !panel.hidden) renderArchivesPanel();
+  const toggle = document.getElementById('archivesToggle');
+  if(toggle){
+    const n = Object.keys(loadArchivedTickers()).length;
+    toggle.textContent = `🗄️ Archives${n ? ' (' + n + ')' : ''}`;
+  }
+}
+
 function refreshAll(){
   checkHealth();
   state.tickers.forEach(loadTicker);
@@ -2655,12 +2888,20 @@ document.getElementById('addBtn').addEventListener('click', () => {
   }
   state.tickers.push(ticker);
   input.value = '';
+  // Si cette valeur avait été archivée puis est ressaisie ici directement
+  // (plutôt que réactivée depuis le panneau Archives), elle n'est plus
+  // "archivée" : on nettoie l'entrée pour qu'elle n'apparaisse plus dans ce
+  // panneau alors qu'elle est de nouveau suivie — ses anciennes données
+  // (séances, objectif, dividendes...) réapparaissent de toute façon
+  // automatiquement, puisqu'elles n'ont jamais été effacées.
+  unarchiveIfNeeded(ticker);
   persistTickers();
   const guessedUrl = guessBoursoramaUrl(ticker);
-  if(guessedUrl) saveSourceUrl(ticker, guessedUrl);
+  if(guessedUrl && !loadSourceUrls()[ticker]) saveSourceUrl(ticker, guessedUrl);
   render();
   refreshDailyUpdateTableIfOpen();
   refreshWeeklyUpdatePanelIfOpen();
+  refreshArchivesPanelIfOpen();
   loadTicker(ticker);
 });
 document.getElementById('tickerInput').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('addBtn').click(); });
@@ -3093,11 +3334,27 @@ document.getElementById('agendaToggle').addEventListener('click', e => {
   if(!panel.hidden) renderAgenda();
 });
 
+document.getElementById('archivesToggle').addEventListener('click', e => {
+  const panel = document.getElementById('archivesPanel');
+  panel.hidden = !panel.hidden;
+  e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  if(!panel.hidden) renderArchivesPanel();
+});
+document.getElementById('archivesPanel').addEventListener('click', e => {
+  const unarchiveBtn = e.target.closest('[data-action="unarchive-ticker"]');
+  if(!unarchiveBtn) return;
+  unarchiveTicker(unarchiveBtn.dataset.ticker);
+});
+
 document.getElementById('dailyUpdateToggle').addEventListener('click', e => {
   const panel = document.getElementById('dailyUpdatePanel');
   panel.hidden = !panel.hidden;
   e.currentTarget.classList.toggle('open', !panel.hidden);
   if(!panel.hidden) renderDailyUpdateTable();
+});
+document.getElementById('dailyShowAllToggle').addEventListener('change', e => {
+  state.dailyShowAll = e.target.checked;
+  renderDailyUpdateTable();
 });
 document.getElementById('dailyUpdatePanel').addEventListener('input', e => {
   const el = e.target.closest('.dailyPasteInput');
@@ -3119,6 +3376,10 @@ document.getElementById('weeklyUpdateToggle').addEventListener('click', e => {
   panel.hidden = !panel.hidden;
   e.currentTarget.classList.toggle('open', !panel.hidden);
   if(!panel.hidden) renderWeeklyUpdatePanel();
+});
+document.getElementById('weeklyShowAllToggle').addEventListener('change', e => {
+  state.weeklyShowAll = e.target.checked;
+  renderWeeklyUpdatePanel();
 });
 document.getElementById('weeklyUpdatePanel').addEventListener('input', e => {
   const el = e.target.closest('.weeklyPasteInput');
@@ -3200,14 +3461,26 @@ document.getElementById('grid').addEventListener('click', e => {
   const saveSeedBtn = e.target.closest('[data-action="save-seed"]');
   if(saveSeedBtn){
     const t = saveSeedBtn.dataset.ticker;
-    const seance = readSeanceForm(t);
-    if(!seance){ alert('Merci de renseigner la date et les 4 valeurs de la séance (ouverture, plus haut, plus bas, clôture).'); return; }
-    const periods = readSeedForm(t);
+    let seance = readSeanceForm(t);
     const store = loadHistoriqueStore();
+    const hasExistingSeances = !!(store[t] && store[t].seances && store[t].seances.length);
+    if(!seance){
+      if(!hasExistingSeances){
+        alert('Merci de renseigner la date et les 4 valeurs de la séance (ouverture, plus haut, plus bas, clôture).');
+        return;
+      }
+      // Des séances ont déjà été enregistrées pour cette valeur (ex. via la
+      // mise à jour hebdomadaire) : on ne redemande pas la dernière cotation
+      // pour valider les données de référence — seule la date de référence
+      // est nécessaire, calée sur la plus récente séance connue.
+      seance = null;
+    }
+    const periods = readSeedForm(t);
     if(!store[t]) store[t] = { seed: null, seances: [] };
-    store[t].seed = { date: seance.date, periods };
+    const seedDate = seance ? seance.date : (lastSeanceDate(t) || isoDate(new Date()));
+    store[t].seed = { date: seedDate, periods };
     saveHistoriqueStore(store);
-    upsertSeance(t, seance);
+    if(seance) upsertSeance(t, seance);
     state.histOpenForms.delete(t);
     render();
     return;
@@ -3290,9 +3563,17 @@ document.getElementById('grid').addEventListener('change', e => {
 });
 document.getElementById('grid').addEventListener('change', e => {
   const peaInput = e.target.closest('.peaManuelCheckbox');
-  if(!peaInput) return;
-  savePeaManuel(peaInput.dataset.ticker, peaInput.checked);
-  render();
+  if(peaInput){
+    savePeaManuel(peaInput.dataset.ticker, peaInput.checked);
+    render();
+    return;
+  }
+  const checklistEmptyInput = e.target.closest('.checklistEmptyCheckbox');
+  if(checklistEmptyInput){
+    setChampVide(checklistEmptyInput.dataset.ticker, checklistEmptyInput.dataset.field, checklistEmptyInput.checked);
+    render();
+    return;
+  }
 });
 document.getElementById('grid').addEventListener('click', e => {
   const addObjBtn = e.target.closest('[data-action="add-objectif-analyste"]');
@@ -3323,6 +3604,23 @@ document.getElementById('grid').addEventListener('click', e => {
     const t = toggleCardEditBtn.dataset.ticker;
     if(state.cardEditOpen.has(t)) state.cardEditOpen.delete(t); else state.cardEditOpen.add(t);
     render();
+    return;
+  }
+  const checklistGotoLink = e.target.closest('[data-action="checklist-goto"]');
+  if(checklistGotoLink){
+    e.preventDefault();
+    const t = checklistGotoLink.dataset.ticker;
+    const field = checklistGotoLink.dataset.field;
+    // La section visée peut être cachée derrière le mode édition de la
+    // fiche (edit-field) et/ou derrière un sous-formulaire repliable : les
+    // deux sont ouverts avant de défiler, sinon l'élément visé n'a encore
+    // aucune position (display:none) et le défilement n'aurait aucun effet.
+    state.cardEditOpen.add(t);
+    if(field === 'historique' || field === 'source') state.histOpenForms.add(t);
+    if(field === 'dividendes') state.divOpenForms.add(t);
+    render();
+    const target = document.getElementById(`sec-${t}-${field}`);
+    if(target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
   const selectChartPeriodRow = e.target.closest('[data-action="select-chart-period"]');
@@ -3498,6 +3796,7 @@ loadPersisted();
 document.getElementById('sortSelect').value = state.sortMode;
 checkHealth();
 render();
+refreshArchivesPanelIfOpen();
 // Mise à jour une seule fois à l'ouverture de la page, puis plus aucun appel
 // automatique au backend : le widget ne se remet plus à jour tout seul en
 // arrière-plan (ce qui coupait la lecture des fiches toutes les 60 s).
