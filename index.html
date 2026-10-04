@@ -1562,11 +1562,19 @@ function readSeanceForm(ticker){
   return seance;
 }
 
-function readSeedForm(ticker){
+// `inputClass` permet de réutiliser cette même logique de lecture pour un
+// second jeu de champs de saisie (ex. le formulaire d'historique ajouté
+// dans le panneau de mise à jour hebdomadaire, voir weeklyHistBlock) sans
+// risque de collision avec celui de la fiche elle-même : les deux peuvent
+// coexister dans le DOM en même temps pour une même valeur (ex. une valeur
+// sans seed encore saisi, dont le formulaire de la fiche ET celui du
+// panneau Réglages sont ouverts simultanément).
+function readSeedForm(ticker, inputClass){
+  const cls = inputClass || 'histSeedInput';
   const periods = {};
   HIST_PERIODS.forEach(p => {
     const get = f => {
-      const el = document.querySelector(`.histSeedInput[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
+      const el = document.querySelector(`.${cls}[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
       // Un champ vide doit compter comme "non saisi", pas comme 0 —
       // Number('') vaut 0 en JavaScript, d'où ce test explicite.
       const v = (el && el.value.trim() !== '') ? Number(el.value) : NaN;
@@ -1618,10 +1626,10 @@ function parseBoursoramaPaste(text){
 // cours de saisie, recalculé à chaque frappe/collage — lit directement les
 // champs affichés (pas le stockage), donc reflète toujours ce qui est
 // visible à l'écran avant l'enregistrement.
-function renderSeedPreview(ticker){
-  const el = document.querySelector(`.hist-preview[data-ticker="${ticker}"]`);
+function renderSeedPreview(ticker, previewClass, inputClass){
+  const el = document.querySelector(`.${previewClass || 'hist-preview'}[data-ticker="${ticker}"]`);
   if(!el) return;
-  const periods = readSeedForm(ticker);
+  const periods = readSeedForm(ticker, inputClass);
   const rows = HIST_PERIODS.map(p => {
     const v = periods[p.key] || {};
     if(v.var_pct === undefined && v.haut === undefined && v.bas === undefined) return '';
@@ -1640,13 +1648,14 @@ function renderSeedPreview(ticker){
     : '';
 }
 
-function fillSeedInputs(ticker, periods){
+function fillSeedInputs(ticker, periods, inputClass){
+  const cls = inputClass || 'histSeedInput';
   HIST_PERIODS.forEach(p => {
     const vals = periods[p.key];
     if(!vals) return;
     ['var_pct', 'haut', 'bas'].forEach(f => {
       if(vals[f] === undefined || isNaN(vals[f])) return;
-      const el = document.querySelector(`.histSeedInput[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
+      const el = document.querySelector(`.${cls}[data-ticker="${ticker}"][data-period="${p.key}"][data-field="${f}"]`);
       if(el) el.value = vals[f];
     });
   });
@@ -1786,7 +1795,13 @@ function dailyUpdateRows(){
   if(!state.tickers.length){
     return `<tr><td colspan="9" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
   }
-  const list = state.dailyShowAll ? state.tickers : state.tickers.filter(t => !isDailyUpToDate(t));
+  // Toujours par ordre alphabétique (ticker), indépendamment du tri choisi
+  // pour la grille principale (state.sortMode) : ce panneau sert à parcourir
+  // méthodiquement toutes les valeurs à mettre à jour, un ordre stable et
+  // prévisible aide à ne pas en perdre le fil plutôt qu'un tri par
+  // performance qui changerait d'une mise à jour à l'autre.
+  const list = (state.dailyShowAll ? state.tickers : state.tickers.filter(t => !isDailyUpToDate(t)))
+    .slice().sort((a,b) => a.localeCompare(b));
   const hint = document.getElementById('dailyUpdateHint');
   if(hint){
     const hidden = state.tickers.length - list.length;
@@ -1941,7 +1956,10 @@ function weeklyUpdateBlocks(){
   if(!state.tickers.length){
     return `<p class="hist-hint">Ajoutez une valeur pour commencer.</p>`;
   }
-  const list = state.weeklyShowAll ? state.tickers : state.tickers.filter(t => !isWeeklyUpToDate(t));
+  // Même choix que dailyUpdateRows() ci-dessus : toujours alphabétique,
+  // indépendamment du tri de la grille principale.
+  const list = (state.weeklyShowAll ? state.tickers : state.tickers.filter(t => !isWeeklyUpToDate(t)))
+    .slice().sort((a,b) => a.localeCompare(b));
   const hint = document.getElementById('weeklyUpdateHint');
   if(hint){
     const hidden = state.tickers.length - list.length;
@@ -1950,11 +1968,32 @@ function weeklyUpdateBlocks(){
   if(!list.length){
     return `<p class="hist-hint">Toutes les valeurs sont déjà à jour 👍</p>`;
   }
+  const histStore = loadHistoriqueStore();
   return list.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
     const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || '');
     const cell = (cls, step, i) => `<td><input type="number" ${step ? `step="${step}"` : ''} class="${cls}" data-ticker="${t}" data-col="${i}" style="width:78px;"></td>`;
+    // Historique de référence (périodes 1 semaine...10 ans) directement dans
+    // ce panneau, pour pouvoir la rafraîchir en même temps que les séances
+    // ci-dessus sans ouvrir la fiche de ${t} — mêmes champs que sur la
+    // fiche (paste + tableau 9 lignes), pré-remplis avec les valeurs déjà
+    // enregistrées quand elles existent, pour pouvoir les corriger plutôt
+    // que de devoir tout retaper. Repliée par défaut (comme sur la fiche)
+    // pour ne pas alourdir ce panneau quand on ne fait "que" les séances.
+    const existingSeed = (histStore[t] || {}).seed;
+    const existingPeriods = (existingSeed && existingSeed.periods) || {};
+    const histOpen = state.histOpenForms.has(t);
+    const seedRows = HIST_PERIODS.map(p => {
+      const v = existingPeriods[p.key] || {};
+      const val = f => (v[f] !== undefined && v[f] !== null) ? v[f] : '';
+      return `<tr>
+        <td>${p.label}</td>
+        <td><input type="number" step="0.01" class="weeklyHistSeedInput" data-ticker="${t}" data-period="${p.key}" data-field="var_pct" placeholder="%" value="${val('var_pct')}"></td>
+        <td><input type="number" step="0.0001" class="weeklyHistSeedInput" data-ticker="${t}" data-period="${p.key}" data-field="haut" placeholder="+ haut" value="${val('haut')}"></td>
+        <td><input type="number" step="0.0001" class="weeklyHistSeedInput" data-ticker="${t}" data-period="${p.key}" data-field="bas" placeholder="+ bas" value="${val('bas')}"></td>
+      </tr>`;
+    }).join('');
     return `<div class="weekly-block" data-ticker="${t}" style="margin-bottom:16px; padding-bottom:12px; border-bottom:1px dashed var(--border);">
       <div style="font-weight:600; margin-bottom:4px;">${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.78rem; font-weight:400;">${t}</span></div>
       <textarea class="weeklyPasteInput" data-ticker="${t}" placeholder="Collez ici le tableau « Historique 5 jours » copié depuis la fiche Boursorama de ${t}" style="min-height:48px;"></textarea>
@@ -1973,6 +2012,24 @@ function weeklyUpdateBlocks(){
       </div>
       <button class="weeklySaveBtn" data-action="save-weekly" data-ticker="${t}" type="button" style="margin-top:6px;">Enregistrer cette semaine</button>
       <div class="weeklyResult hist-hint" data-ticker="${t}" style="margin-top:4px;"></div>
+
+      <div style="margin-top:10px; padding-top:8px; border-top:1px dashed var(--border);">
+        <button class="hist-toggle${histOpen ? ' open' : ''}" data-action="toggle-weekly-hist-form" data-ticker="${t}">📜 Historique de référence (périodes)${existingSeed ? ' — saisi le ' + frDate(existingSeed.date) : ' — non saisi'}<span class="chevron">›</span></button>
+        <div ${histOpen ? '' : 'hidden'}>
+          <p class="hist-hint">Variations par période (1 semaine à 10 ans) de ${t} — pratique pour les rafraîchir en même temps que les séances ci-dessus, sans ouvrir sa fiche. Collez le tableau copié depuis Boursorama, ou corrigez les champs à la main ; les champs déjà enregistrés sont pré-remplis.</p>
+          <div class="hist-paste-row">
+            <textarea class="weeklyHistPaste" data-ticker="${t}" placeholder="Collez ici le tableau copié (1er janvier ... 10 ans)"></textarea>
+            <button data-action="parse-weekly-hist-paste" data-ticker="${t}">Analyser</button>
+          </div>
+          <table class="hist-table">
+            <thead><tr><th>Période</th><th>Var.</th><th>+ Haut</th><th>+ Bas</th></tr></thead>
+            <tbody>${seedRows}</tbody>
+          </table>
+          <div class="weeklyHistPreview hist-preview" data-ticker="${t}"></div>
+          <button data-action="save-weekly-hist" data-ticker="${t}" style="margin-top:6px;">Enregistrer l'historique de référence</button>
+          <div class="weeklyHistResult hist-hint" data-ticker="${t}" style="margin-top:4px;"></div>
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
@@ -2378,8 +2435,23 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
       <td class="${v.var_pct>0?'up':(v.var_pct<0?'down':'')}">${v.var_pct>0?'+':''}${fmt(v.var_pct,2)}%</td>
       <td>${fmtPrix(v.haut)}</td>
       <td>${fmtPrix(v.bas)}</td>
-      <td title="${v.computed ? 'Calculé à partir de vos séances saisies' : 'Encore basé sur votre saisie initiale du '+entry.seed.date+' (pas assez de séances saisies pour ce recul)'}">${v.computed ? '📈' : '🗓️'}</td>
+      <td style="white-space:nowrap; font-size:.72rem; color:var(--ink-muted);" title="${v.computed ? 'Calculé automatiquement à partir de vos séances saisies (quotidien/hebdomadaire) — se met à jour tout seul à chaque nouvelle séance' : 'Encore basé sur votre saisie initiale du '+frDate(entry.seed.date)+' (pas assez de séances saisies pour couvrir tout ce recul) — bascule automatiquement en calcul réel dès que vos séances remontent assez loin'}">${v.computed ? '📈' : '🗓️ estimation'}</td>
     </tr>`).join('');
+  // Résumé au-dessus du tableau : combien de périodes sont déjà intégralement
+  // recalculées à partir des séances saisies (quotidien/hebdomadaire) vs
+  // encore basées (au moins en partie) sur la saisie initiale du seed — les
+  // périodes courtes (1 semaine, 1 mois...) basculent automatiquement en
+  // "calculé" après quelques jours/semaines de mises à jour régulières ; les
+  // périodes longues (1 an et plus) ont structurellement besoin d'années de
+  // séances pour y parvenir et resteront donc des estimations la plupart du
+  // temps, à rafraîchir manuellement de temps en temps si besoin (bouton
+  // "Ré-saisir les valeurs de référence" ci-dessous, qui ne touche pas aux
+  // séances déjà enregistrées).
+  const nbComputed = variations.filter(v => v.computed).length;
+  const seedAgeDays = daysBetweenIso(entry.seed.date, todayStr);
+  const autoHint = (variations.length && nbComputed === variations.length)
+    ? `<p class="hist-hint">📈 Toutes les périodes ci-dessous sont désormais calculées automatiquement à partir de vos séances saisies.</p>`
+    : `<p class="hist-hint">📈 calculé automatiquement à partir de vos séances · 🗓️ estimation encore basée sur votre saisie initiale du ${frDate(entry.seed.date)} (il y a ${seedAgeDays} jour${seedAgeDays>1?'s':''}) — les périodes longues (1 an et plus) restent une estimation tant qu'assez de séances n'ont pas été saisies pour couvrir tout le recul ; rafraîchissez-la à tout moment avec « Ré-saisir les valeurs de référence » ci-dessous si besoin (vos séances déjà saisies restent intactes).</p>`;
   const costBasisForPnl = loadCostBasis()[ticker];
   let pnlLine = '';
   if(costBasisForPnl !== undefined && costBasisForPnl !== null && !isNaN(costBasisForPnl) && currentClose !== null && currentClose !== undefined && !isNaN(currentClose)){
@@ -2390,6 +2462,7 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
   }
   return `<div class="hist-block" id="sec-${ticker}-historique">
     ${sourceRow}
+    ${autoHint}
     <table class="hist-table">
       <thead><tr><th>Période</th><th>Var.</th><th>+ Haut</th><th>+ Bas</th><th></th></tr></thead>
       <tbody>${rowsHtml}</tbody>
@@ -3396,16 +3469,64 @@ document.getElementById('weeklyUpdatePanel').addEventListener('input', e => {
 });
 document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
   const btn = e.target.closest('[data-action="save-weekly"]');
-  if(!btn) return;
-  const t = btn.dataset.ticker;
-  const { count, notes } = saveWeeklyBlock(t);
-  const resultEl = document.querySelector(`.weeklyResult[data-ticker="${t}"]`);
-  if(resultEl){
-    resultEl.textContent = count
-      ? `✅ ${count} séance(s) enregistrée(s). ${notes.join(' ; ')}`
-      : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer).";
+  if(btn){
+    const t = btn.dataset.ticker;
+    const { count, notes } = saveWeeklyBlock(t);
+    const resultEl = document.querySelector(`.weeklyResult[data-ticker="${t}"]`);
+    if(resultEl){
+      resultEl.textContent = count
+        ? `✅ ${count} séance(s) enregistrée(s). ${notes.join(' ; ')}`
+        : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer).";
+    }
+    if(count) render();
+    return;
   }
-  if(count) render();
+  // Repli/dépli de l'historique de référence d'UNE valeur de ce panneau :
+  // bascule juste ce bloc directement dans le DOM (sans régénérer tout le
+  // panneau via renderWeeklyUpdatePanel/render), pour ne jamais perdre une
+  // saisie en cours dans un autre bloc (séances ou historique d'une autre
+  // valeur) pendant que le panneau reste ouvert.
+  const toggleWeeklyHistBtn = e.target.closest('[data-action="toggle-weekly-hist-form"]');
+  if(toggleWeeklyHistBtn){
+    const t = toggleWeeklyHistBtn.dataset.ticker;
+    if(state.histOpenForms.has(t)) state.histOpenForms.delete(t); else state.histOpenForms.add(t);
+    const isOpen = state.histOpenForms.has(t);
+    toggleWeeklyHistBtn.classList.toggle('open', isOpen);
+    const body = toggleWeeklyHistBtn.nextElementSibling;
+    if(body) body.hidden = !isOpen;
+    return;
+  }
+  const parseWeeklyHistBtn = e.target.closest('[data-action="parse-weekly-hist-paste"]');
+  if(parseWeeklyHistBtn){
+    const t = parseWeeklyHistBtn.dataset.ticker;
+    const textEl = document.querySelector(`.weeklyHistPaste[data-ticker="${t}"]`);
+    const periods = parseBoursoramaPaste(textEl ? textEl.value : '');
+    fillSeedInputs(t, periods, 'weeklyHistSeedInput');
+    renderSeedPreview(t, 'weeklyHistPreview', 'weeklyHistSeedInput');
+    return;
+  }
+  const saveWeeklyHistBtn = e.target.closest('[data-action="save-weekly-hist"]');
+  if(saveWeeklyHistBtn){
+    const t = saveWeeklyHistBtn.dataset.ticker;
+    const periods = readSeedForm(t, 'weeklyHistSeedInput');
+    const resultEl = document.querySelector(`.weeklyHistResult[data-ticker="${t}"]`);
+    const hasAnyValue = HIST_PERIODS.some(p => {
+      const v = periods[p.key] || {};
+      return v.var_pct !== undefined || v.haut !== undefined || v.bas !== undefined;
+    });
+    if(!hasAnyValue){
+      if(resultEl) resultEl.textContent = 'Rien à enregistrer — collez le tableau ou renseignez au moins une période.';
+      return;
+    }
+    const store = loadHistoriqueStore();
+    if(!store[t]) store[t] = { seed: null, seances: [] };
+    const seedDate = lastSeanceDate(t) || isoDate(new Date());
+    store[t].seed = { date: seedDate, periods };
+    saveHistoriqueStore(store);
+    if(resultEl) resultEl.textContent = `✅ Historique de référence enregistré (daté du ${frDate(seedDate)}).`;
+    render();
+    return;
+  }
 });
 document.getElementById('bulkAddBtn').addEventListener('click', () => {
   const raw = document.getElementById('bulkAddInput').value;
