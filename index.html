@@ -94,6 +94,11 @@
   .position input{width:90px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; font-size:.85rem; font-family:inherit;}
   .position .pnl{font-weight:700;}
   .position .pnl.up{color:var(--good);} .position .pnl.down{color:var(--bad);} .position .pnl.flat{color:var(--ink);}
+  /* Variante autonome (hors bloc .position) : même rendu, utilisée en haut de
+     fiche sous la date de saisie du cours. */
+  .pnl{font-weight:700;}
+  .pnl.up{color:var(--good);} .pnl.down{color:var(--bad);} .pnl.flat{color:var(--ink);}
+  .price-top-pnl{font-size:.78rem; margin:-2px 0 6px;}
   .position .note{margin-top:6px; color:var(--ink-2); background:var(--surface-2); border-radius:6px; padding:6px 8px;}
   .position .clear{background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.76rem; padding:0;}
   .hist-block{margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); font-size:.82rem;}
@@ -119,6 +124,10 @@
      hauteur fixée en CSS pour rester compact sur chaque fiche. */
   .price-chart{margin-top:8px;}
   .price-chart svg{width:100%; display:block;}
+  .price-chart svg circle[data-action="select-chart-point"]{cursor:pointer;}
+  .price-chart-detail{margin-top:4px; font-size:.75rem; color:var(--ink-2); background:var(--surface-2); border-radius:6px; padding:6px 8px;}
+  .price-chart-detail b{color:var(--ink);}
+  .price-chart-detail button{margin-left:6px; background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.72rem; padding:0;}
   .hist-table input{width:64px; padding:3px 4px; border:1px solid var(--border); border-radius:5px; font-size:.78rem; font-family:inherit; text-align:right;}
   .hist-seance-row{display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-top:8px; font-size:.76rem;}
   .hist-seance-row input{padding:3px 5px; border:1px solid var(--border); border-radius:5px; font-size:.78rem; font-family:inherit; width:76px;}
@@ -338,7 +347,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, sortMode: 'alpha', compareSelected: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, sortMode: 'alpha', compareSelected: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -1409,6 +1418,39 @@ function computeVariations(ticker, currentClose){
   });
 }
 
+// Flèche colorée affichée juste à côté du dernier cours, pour voir en un coup
+// d'oeil l'orientation de la semaine écoulée (même seuil ±0,5 % que partout
+// ailleurs dans la fiche pour la plus/moins-value et les variations) :
+// ↗ verte = hausse, ↘ rouge = baisse, → noire = stagnation. S'appuie sur
+// computeVariations() (période "1sem"), donc nécessite qu'un historique ait
+// déjà été saisi au moins une fois pour ce titre — sinon rien n'est affiché
+// (pas de donnée inventée).
+function weeklyTrendArrow(ticker, currentClose){
+  const variations = computeVariations(ticker, currentClose);
+  if(!variations) return '';
+  const semaine = variations.find(v => v.key === '1sem');
+  if(!semaine || semaine.var_pct === null || semaine.var_pct === undefined || isNaN(semaine.var_pct)) return '';
+  const pct = semaine.var_pct;
+  const hausse = pct > 0.5, baisse = pct < -0.5;
+  const arrow = hausse ? '↗' : (baisse ? '↘' : '→');
+  const color = hausse ? 'var(--good)' : (baisse ? 'var(--bad)' : 'var(--ink)');
+  const label = hausse ? 'Hausse' : (baisse ? 'Baisse' : 'Stagnation');
+  return ` <span style="color:${color}; font-weight:700; cursor:help;" title="Tendance sur la semaine écoulée : ${label} (${pct>0?'+':''}${fmt(pct,2)}%)">${arrow}</span>`;
+}
+
+// Ligne compacte "Plus/moins-value" réutilisable (ex. juste sous la date de
+// saisie du cours, en haut de la fiche) : renvoie null si aucun prix de
+// revient n'est renseigné, pour laisser l'appelant décider de ne rien
+// afficher dans ce cas plutôt que de retourner une chaîne vide muette.
+function plusMoinsValueInline(ticker, cours, devise){
+  const costBasis = loadCostBasis()[ticker];
+  if(costBasis === undefined || costBasis === null || isNaN(costBasis) || cours === null || cours === undefined || isNaN(cours)) return null;
+  const pnlValeur = cours - costBasis;
+  const pnlPct = (pnlValeur / costBasis) * 100;
+  const cls = pnlPct > 0.5 ? 'up' : (pnlPct < -0.5 ? 'down' : 'flat');
+  return `Plus/moins-value : <span class="pnl ${cls}">${pnlPct>0?'+':''}${fmt(pnlPct,2)}% (${pnlValeur>0?'+':''}${fmt(pnlValeur,2)} ${devise}/action)</span>`;
+}
+
 function readSeanceForm(ticker){
   const dateEl = document.querySelector(`.histSeanceDate[data-ticker="${ticker}"]`);
   const date = dateEl ? dateEl.value : '';
@@ -1969,9 +2011,26 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
   const costLine = refLine(costBasis, 'var(--ink-muted)', '2 3', 'Revient ' + fmtPrix(costBasis) + ' ' + devise);
 
   const pathD = points.map((p, i) => `${i===0?'M':'L'} ${sx(new Date(p.date+'T00:00:00Z').getTime()).toFixed(1)},${sy(p.clo).toFixed(1)}`).join(' ');
-  const circles = points.map(p => {
+  // Chaque séance est représentée par deux cercles superposés : un petit
+  // point visible (repère "dernière séance" légèrement plus gros, repère
+  // "séance sélectionnée" plus gros encore et cerclé) et, au-dessus, une
+  // cible de clic transparente plus large (r=9) — plus facile à toucher que
+  // le point lui-même, surtout quand beaucoup de séances sont rapprochées.
+  // Le survol garde l'infobulle native (desktop) ; le clic affiche en plus
+  // un panneau détaillé sous le graphique (utile aussi au doigt, sur mobile,
+  // où le survol n'existe pas).
+  const selectedDate = state.chartSelectedPoint[ticker];
+  const circles = points.map((p, i) => {
     const cx = sx(new Date(p.date+'T00:00:00Z').getTime()).toFixed(1), cy = sy(p.clo).toFixed(1);
-    return `<circle cx="${cx}" cy="${cy}" r="2.6" fill="var(--accent)"><title>${frDate(p.date)} — ${fmtPrix(p.clo)} ${devise}${p.volume!==undefined && p.volume!==null ? ' — vol. '+fmt(p.volume,0)+' K' : ''}</title></circle>`;
+    const isLast = i === points.length - 1;
+    const isSelected = selectedDate === p.date;
+    const r = isSelected ? 4.2 : (isLast ? 3.4 : 2.6);
+    const fill = isSelected ? 'var(--ink)' : 'var(--accent)';
+    const stroke = isSelected ? '#fff' : 'none';
+    const strokeW = isSelected ? 1.4 : 0;
+    const dot = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"><title>${frDate(p.date)} — ${fmtPrix(p.clo)} ${devise}${p.volume!==undefined && p.volume!==null ? ' — vol. '+fmt(p.volume,0)+' K' : ''}</title></circle>`;
+    const hit = `<circle cx="${cx}" cy="${cy}" r="9" fill="transparent" data-action="select-chart-point" data-ticker="${ticker}" data-date="${p.date}"/>`;
+    return dot + hit;
   }).join('');
 
   let volumeBars = '';
@@ -1999,10 +2058,29 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
     circles + yAxisLabels + xAxisLabels +
     `</svg>`;
 
+  // Panneau d'information affiché sous le graphique lorsqu'on clique sur une
+  // séance : date, clôture, plus haut/bas et volume de CETTE séance (jamais
+  // de la période globale). Même convention d'affichage que le résumé "déjà
+  // enregistrée" du tableau d'historique (O/H/B/C/Var./Vol.).
+  let detailPanel = '';
+  if(selectedDate){
+    const sel = points.find(p => p.date === selectedDate);
+    if(sel){
+      const varTxt = (sel.var_pct !== undefined && sel.var_pct !== null)
+        ? ` · Var. <span style="color:${sel.var_pct>0?'var(--good)':(sel.var_pct<0?'var(--bad)':'var(--ink)')}; font-weight:700;">${sel.var_pct>0?'+':''}${fmt(sel.var_pct,2)}%</span>`
+        : '';
+      detailPanel = `<div class="price-chart-detail">
+        <b>${frDate(sel.date)}</b> — Ouverture : ${fmtPrix(sel.ouv)} ${devise} · Clôture : <b>${fmtPrix(sel.clo)} ${devise}</b>${varTxt} · Plus haut : ${fmtPrix(sel.haut)} ${devise} · Plus bas : ${fmtPrix(sel.bas)} ${devise}${sel.volume!==undefined && sel.volume!==null ? ` · Volume : ${fmt(sel.volume,0)} K` : ''}
+        <button type="button" data-action="deselect-chart-point" data-ticker="${ticker}">fermer</button>
+      </div>`;
+    }
+  }
+
   return `<div class="price-chart">
     <div style="font-weight:600; font-size:.85rem; margin-bottom:2px;">📈 Évolution du cours — ${escapeHtml(period.label)}</div>
     ${svg}
     ${note ? `<p class="hist-hint" style="margin-top:4px;">${escapeHtml(note)}</p>` : ''}
+    ${detailPanel}
   </div>`;
 }
 
@@ -2214,9 +2292,11 @@ function cardContent(ticker, d, alertMsgs){
     const objDate0 = loadObjectifManuelDate()[ticker];
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
     const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
+    const pnlTopLine0 = plusMoinsValueInline(ticker, cours, deviseGuess);
     const priceLine = cours !== null
-      ? `<div class="price">${fmtPrix(cours)} ${deviseGuess} ${variationBadge(dailyVarPct0)}</div>
-         <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>`
+      ? `<div class="price">${fmtPrix(cours)} ${deviseGuess} ${variationBadge(dailyVarPct0)}${weeklyTrendArrow(ticker, cours)}</div>
+         <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>
+         ${pnlTopLine0 ? `<div class="price-top-pnl">${pnlTopLine0}</div>` : ''}`
       : '';
     const objectifLine = hasObjManuel
       ? `<div class="kv"><span>Objectif 3 mois (saisi${objDate0 ? ' au ' + frDate(objDate0) : ''}) : <b>${fmtPrix(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
@@ -2319,6 +2399,7 @@ function cardContent(ticker, d, alertMsgs){
   } else {
     priceFreshnessNote = '';
   }
+  const pnlTopLine = plusMoinsValueInline(ticker, cours, devise);
   let positionBox;
   if(costBasis){
     const pnlValeur = cours - costBasis;
@@ -2356,8 +2437,9 @@ function cardContent(ticker, d, alertMsgs){
       </div>
     </div>
     <span class="badge ${d.conseil}" title="${escapeHtml(conseilTooltip(d))}">${d.conseil}</span><span style="font-size:.72rem; color:var(--ink-muted); margin-left:5px; cursor:help;" title="${escapeHtml(conseilTooltip(d))}">score ${d.scoring && d.scoring.global!==null && d.scoring.global!==undefined ? fmt(d.scoring.global,2)+'/10' : '—'} ⓘ</span>
-    <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}</div>
+    <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}${weeklyTrendArrow(ticker, cours)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
+    ${pnlTopLine ? `<div class="price-top-pnl">${pnlTopLine}</div>` : ''}
     <div class="kv">
       <span>Niveau de risque : <b style="color:${riskColor(d.niveau_risque)}">${d.niveau_risque}/10</b></span>
       <span>Objectif 3 mois : <b>${objectifRetenu!==null && objectifRetenu!==undefined ? fmtPrix(objectifRetenu)+' '+devise : '—'}</b>${potentielPct!==null && potentielPct!==undefined ? ` (${pctSpan(potentielPct)})` : ''}${hasObjManuel ? ' <span style="font-size:.7rem; color:var(--ink-muted);">(saisi)</span>' + (objDate ? ` <span style="font-size:.7rem; color:var(--ink-muted);">au ${frDate(objDate)}</span>` : '') : (d.objectif_3_mois && d.objectif_3_mois.fiable===false ? ' <span title="'+escapeHtml(d.objectif_3_mois.avertissement||'')+'" style="cursor:help;">⚠️</span>' : '')}</span>
@@ -3178,6 +3260,20 @@ document.getElementById('grid').addEventListener('click', e => {
   const selectChartPeriodRow = e.target.closest('[data-action="select-chart-period"]');
   if(selectChartPeriodRow){
     state.chartPeriod[selectChartPeriodRow.dataset.ticker] = selectChartPeriodRow.dataset.period;
+    render();
+    return;
+  }
+  const selectChartPointEl = e.target.closest('[data-action="select-chart-point"]');
+  if(selectChartPointEl){
+    const t = selectChartPointEl.dataset.ticker, dte = selectChartPointEl.dataset.date;
+    // Cliquer à nouveau sur le même point le désélectionne (referme le panneau).
+    state.chartSelectedPoint[t] = (state.chartSelectedPoint[t] === dte) ? null : dte;
+    render();
+    return;
+  }
+  const deselectChartPointBtn = e.target.closest('[data-action="deselect-chart-point"]');
+  if(deselectChartPointBtn){
+    delete state.chartSelectedPoint[deselectChartPointBtn.dataset.ticker];
     render();
     return;
   }
