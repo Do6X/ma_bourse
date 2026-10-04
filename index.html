@@ -128,6 +128,10 @@
   .price-chart-detail{margin-top:4px; font-size:.75rem; color:var(--ink-2); background:var(--surface-2); border-radius:6px; padding:6px 8px;}
   .price-chart-detail b{color:var(--ink);}
   .price-chart-detail button{margin-left:6px; background:none; border:none; color:var(--ink-muted); text-decoration:underline; cursor:pointer; font-size:.72rem; padding:0;}
+  .chart-range-row{display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-top:6px; font-size:.74rem; color:var(--ink-muted);}
+  .chart-range-row input[type=date]{padding:3px 5px; border:1px solid var(--border); border-radius:5px; font-size:.74rem; font-family:inherit; width:124px;}
+  .chart-range-row button{white-space:nowrap; background:var(--accent); color:#fff; border:none; border-radius:6px; padding:5px 9px; font-size:.72rem; cursor:pointer;}
+  .chart-range-row button.clear{background:none; color:var(--ink-muted); text-decoration:underline; padding:5px 2px;}
   .hist-table input{width:64px; padding:3px 4px; border:1px solid var(--border); border-radius:5px; font-size:.78rem; font-family:inherit; text-align:right;}
   .hist-seance-row{display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-top:8px; font-size:.76rem;}
   .hist-seance-row input{padding:3px 5px; border:1px solid var(--border); border-radius:5px; font-size:.78rem; font-family:inherit; width:76px;}
@@ -347,7 +351,7 @@
 </div>
 
 <script>
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, sortMode: 'alpha', compareSelected: new Set() };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set() };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -1941,25 +1945,44 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
   if(!seances.length){
     return `<div class="price-chart"><p class="hist-hint" style="margin:8px 0 0;">📈 Le graphique apparaîtra ici dès votre première séance saisie ci-dessous.</p></div>`;
   }
+  // Fenêtre affichée : soit une période prédéfinie (clic sur une ligne du
+  // tableau d'historique), soit une plage de dates libre saisie ci-dessous —
+  // cette dernière, quand elle est active, prend le pas sur la période.
+  const customRange = state.chartCustomRange[ticker];
+  const hasCustomRange = !!(customRange && customRange.from && customRange.to && customRange.from <= customRange.to);
   const periodKey = state.chartPeriod[ticker] || '1sem';
   const period = HIST_PERIODS.find(p => p.key === periodKey) || HIST_PERIODS[1];
-  const windowStartStr = periodWindowStartIso(periodKey);
+  const windowStartStr = hasCustomRange ? customRange.from : periodWindowStartIso(periodKey);
+  const windowEndStr = hasCustomRange ? customRange.to : null;
+  const windowLabel = hasCustomRange ? `${frDate(customRange.from)} → ${frDate(customRange.to)}` : period.label;
 
-  let points = seances.filter(s => s.date >= windowStartStr);
+  let points = seances.filter(s => s.date >= windowStartStr && (!windowEndStr || s.date <= windowEndStr));
   let note = null;
   if(!points.length){
     // Aucune séance dans la fenêtre demandée (ex. "1 semaine" mais pas de
     // saisie depuis plus longtemps) : on affiche quand même les dernières
     // séances disponibles plutôt qu'un graphique vide, avec une note claire.
     points = seances.slice(-30);
-    note = `Aucune séance saisie sur la période « ${period.label} » — dernières séances disponibles affichées à la place.`;
+    note = `Aucune séance saisie sur la période « ${windowLabel} » — dernières séances disponibles affichées à la place.`;
   } else if(seances[0].date > windowStartStr){
-    note = `Vos séances saisies commencent le ${frDate(seances[0].date)} — plus récent que le début de la période « ${period.label} » : seule la portion couverte par vos saisies est affichée.`;
+    note = `Vos séances saisies commencent le ${frDate(seances[0].date)} — plus récent que le début de la période « ${windowLabel} » : seule la portion couverte par vos saisies est affichée.`;
   }
 
   const costBasis = loadCostBasis()[ticker];
   const variations = computeVariations(ticker, currentClose) || [];
-  const periodVar = variations.find(v => v.key === periodKey);
+  const periodVar = hasCustomRange ? null : variations.find(v => v.key === periodKey);
+  // Bande plus haut/plus bas de la fenêtre affichée : pour une période
+  // prédéfinie, on réutilise l'agrégat déjà saisi/calculé pour cette période
+  // (periodVar). Pour une plage de dates libre, aucun agrégat de ce type
+  // n'existe (la plage est arbitraire) : elle est alors recalculée
+  // directement à partir des séances réellement affichées dans la fenêtre.
+  let bandHaut = null, bandBas = null;
+  if(periodVar && periodVar.haut !== undefined && periodVar.haut !== null && periodVar.bas !== undefined && periodVar.bas !== null){
+    bandHaut = periodVar.haut; bandBas = periodVar.bas;
+  } else if(hasCustomRange && points.length){
+    bandHaut = Math.max(...points.map(p => p.haut));
+    bandBas = Math.min(...points.map(p => p.bas));
+  }
 
   // Échelle Y : inclut les cours tracés + toute ligne de référence visible
   // (objectif, prix de revient, bande haut/bas) pour qu'elle reste toujours
@@ -1972,10 +1995,8 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
       if(v > yMax) yMax = v;
     }
   });
-  if(periodVar){
-    if(periodVar.haut !== undefined && periodVar.haut !== null && periodVar.haut > yMax) yMax = periodVar.haut;
-    if(periodVar.bas !== undefined && periodVar.bas !== null && periodVar.bas < yMin) yMin = periodVar.bas;
-  }
+  if(bandHaut !== null && bandHaut > yMax) yMax = bandHaut;
+  if(bandBas !== null && bandBas < yMin) yMin = bandBas;
   if(yMin === yMax){ yMin -= 1; yMax += 1; }
   const yPad = (yMax - yMin) * 0.08;
   yMin -= yPad; yMax += yPad;
@@ -1996,9 +2017,26 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
   const sy = v => priceY1 - (v - yMin) / (yMax - yMin) * (priceY1 - priceY0);
 
   let bandRect = '';
-  if(periodVar && periodVar.haut !== undefined && periodVar.haut !== null && periodVar.bas !== undefined && periodVar.bas !== null && periodVar.haut > periodVar.bas){
-    const yTop = sy(periodVar.haut), yBas = sy(periodVar.bas);
+  if(bandHaut !== null && bandBas !== null && bandHaut > bandBas){
+    const yTop = sy(bandHaut), yBas = sy(bandBas);
     bandRect = `<rect x="${plotX0}" y="${yTop.toFixed(1)}" width="${(plotX1-plotX0).toFixed(1)}" height="${(yBas-yTop).toFixed(1)}" fill="var(--accent-soft)"/>`;
+  }
+
+  // Grille horizontale légère : 3 repères intermédiaires entre les deux
+  // bornes de prix affichées (haut/bas), pour évaluer plus facilement les
+  // niveaux intermédiaires — des lignes fines et neutres, bien distinctes
+  // des lignes de référence "Objectif"/"Revient" (celles-ci restent en
+  // tirets colorés).
+  let gridLines = '';
+  for(let i = 1; i <= 3; i++){
+    const v = yMin + (yMax - yMin) * (i / 4);
+    const y = sy(v);
+    gridLines += `<line x1="${plotX0}" y1="${y.toFixed(1)}" x2="${plotX1}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.6"/>`;
+    // On évite d'étiqueter une ligne de grille trop proche des étiquettes
+    // haut/bas déjà affichées (chevauchement de texte).
+    if(Math.abs(y - priceY0) > 7 && Math.abs(y - priceY1) > 7){
+      gridLines += `<text x="2" y="${(y+3).toFixed(1)}" font-size="7.5" fill="var(--ink-muted)">${fmtPrix(v)}</text>`;
+    }
   }
 
   function refLine(value, color, dash, label){
@@ -2020,15 +2058,28 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
   // un panneau détaillé sous le graphique (utile aussi au doigt, sur mobile,
   // où le survol n'existe pas).
   const selectedDate = state.chartSelectedPoint[ticker];
+  // Sur une longue période avec beaucoup de séances saisies, afficher un
+  // point visible pour CHAQUE séance surchargerait le graphique (points
+  // collés les uns aux autres). Au-delà d'un certain nombre de séances, on
+  // espace donc l'affichage des points visibles (un point sur N), tout en
+  // gardant une cible de clic sur CHAQUE séance (transparente, donc sans
+  // impact visuel) : aucune séance ne devient injoignable au clic, seul
+  // l'affichage est allégé.
+  const DOT_DISPLAY_MAX = 60;
+  const dotStride = points.length > DOT_DISPLAY_MAX ? Math.ceil(points.length / DOT_DISPLAY_MAX) : 1;
   const circles = points.map((p, i) => {
     const cx = sx(new Date(p.date+'T00:00:00Z').getTime()).toFixed(1), cy = sy(p.clo).toFixed(1);
     const isLast = i === points.length - 1;
     const isSelected = selectedDate === p.date;
-    const r = isSelected ? 4.2 : (isLast ? 3.4 : 2.6);
-    const fill = isSelected ? 'var(--ink)' : 'var(--accent)';
-    const stroke = isSelected ? '#fff' : 'none';
-    const strokeW = isSelected ? 1.4 : 0;
-    const dot = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"><title>${frDate(p.date)} — ${fmtPrix(p.clo)} ${devise}${p.volume!==undefined && p.volume!==null ? ' — vol. '+fmt(p.volume,0)+' K' : ''}</title></circle>`;
+    const showDot = isSelected || isLast || (i % dotStride === 0);
+    let dot = '';
+    if(showDot){
+      const r = isSelected ? 4.2 : (isLast ? 3.4 : 2.6);
+      const fill = isSelected ? 'var(--ink)' : 'var(--accent)';
+      const stroke = isSelected ? '#fff' : 'none';
+      const strokeW = isSelected ? 1.4 : 0;
+      dot = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"><title>${frDate(p.date)} — ${fmtPrix(p.clo)} ${devise}${p.volume!==undefined && p.volume!==null ? ' — vol. '+fmt(p.volume,0)+' K' : ''}</title></circle>`;
+    }
     const hit = `<circle cx="${cx}" cy="${cy}" r="9" fill="transparent" data-action="select-chart-point" data-ticker="${ticker}" data-date="${p.date}"/>`;
     return dot + hit;
   }).join('');
@@ -2052,8 +2103,8 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
   const xAxisLabels = `<text x="${plotX0}" y="${xLabelY.toFixed(1)}" font-size="8.5" fill="var(--ink-muted)">${frDate(points[0].date)}</text>` +
     `<text x="${plotX1}" y="${xLabelY.toFixed(1)}" text-anchor="end" font-size="8.5" fill="var(--ink-muted)">${frDate(points[points.length-1].date)}</text>`;
 
-  const svg = `<svg viewBox="0 0 ${CHART_W} ${totalH}" preserveAspectRatio="none" style="height:${Math.round(totalH*0.82)}px;" role="img" aria-label="Évolution du cours de ${ticker}, période ${period.label}">` +
-    bandRect + costLine + objLine + volumeBars +
+  const svg = `<svg viewBox="0 0 ${CHART_W} ${totalH}" preserveAspectRatio="none" style="height:${Math.round(totalH*0.82)}px;" role="img" aria-label="Évolution du cours de ${ticker}, période ${windowLabel}">` +
+    gridLines + bandRect + costLine + objLine + volumeBars +
     `<path d="${pathD}" fill="none" stroke="var(--accent)" stroke-width="2"/>` +
     circles + yAxisLabels + xAxisLabels +
     `</svg>`;
@@ -2076,11 +2127,23 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
     }
   }
 
+  // Plage de dates libre, en complément du clic sur une ligne du tableau :
+  // reste discrète (champs vides) tant qu'elle n'est pas utilisée, et
+  // affiche un bouton pour revenir aux périodes prédéfinies une fois active.
+  const rangeRow = `<div class="chart-range-row">
+    <input type="date" class="chartRangeFrom" data-ticker="${ticker}" value="${hasCustomRange ? customRange.from : ''}" title="Afficher le graphique à partir de cette date">
+    <span>→</span>
+    <input type="date" class="chartRangeTo" data-ticker="${ticker}" value="${hasCustomRange ? customRange.to : ''}" title="... jusqu'à cette date">
+    <button type="button" data-action="apply-chart-range" data-ticker="${ticker}">Afficher cette plage</button>
+    ${hasCustomRange ? `<button type="button" class="clear" data-action="reset-chart-range" data-ticker="${ticker}">Revenir aux périodes ↺</button>` : ''}
+  </div>`;
+
   return `<div class="price-chart">
-    <div style="font-weight:600; font-size:.85rem; margin-bottom:2px;">📈 Évolution du cours — ${escapeHtml(period.label)}</div>
+    <div style="font-weight:600; font-size:.85rem; margin-bottom:2px;">📈 Évolution du cours — ${escapeHtml(windowLabel)}</div>
     ${svg}
     ${note ? `<p class="hist-hint" style="margin-top:4px;">${escapeHtml(note)}</p>` : ''}
     ${detailPanel}
+    ${rangeRow}
   </div>`;
 }
 
@@ -2150,8 +2213,13 @@ function historiqueBox(ticker, currentClose, devise, objectifRetenu){
     ].filter(Boolean).join(' · ') : '';
   // Chaque ligne du tableau est cliquable : elle met à jour le graphique du
   // cours ci-dessous sur cette période (state.chartPeriod), avec une mise en
-  // évidence de la ligne actuellement sélectionnée.
-  const selectedPeriod = state.chartPeriod[ticker] || '1sem';
+  // évidence de la ligne actuellement sélectionnée — sauf quand une plage de
+  // dates libre est active (voir priceChartSvg) : dans ce cas, aucune des
+  // périodes prédéfinies n'est réellement "sélectionnée", donc aucune ligne
+  // n'est mise en évidence.
+  const activeCustomRange = state.chartCustomRange[ticker];
+  const hasActiveCustomRange = !!(activeCustomRange && activeCustomRange.from && activeCustomRange.to && activeCustomRange.from <= activeCustomRange.to);
+  const selectedPeriod = hasActiveCustomRange ? null : (state.chartPeriod[ticker] || '1sem');
   const rowsHtml = variations.map(v => `
     <tr data-action="select-chart-period" data-ticker="${ticker}" data-period="${v.key}" class="${v.key===selectedPeriod ? 'chart-period-selected' : ''}" title="Afficher cette période sur le graphique ci-dessous">
       <td>${v.label}</td>
@@ -3259,7 +3327,11 @@ document.getElementById('grid').addEventListener('click', e => {
   }
   const selectChartPeriodRow = e.target.closest('[data-action="select-chart-period"]');
   if(selectChartPeriodRow){
-    state.chartPeriod[selectChartPeriodRow.dataset.ticker] = selectChartPeriodRow.dataset.period;
+    const t = selectChartPeriodRow.dataset.ticker;
+    state.chartPeriod[t] = selectChartPeriodRow.dataset.period;
+    // Choisir une période prédéfinie prend le pas sur une éventuelle plage
+    // de dates libre active jusque-là, pour revenir à un comportement prévisible.
+    delete state.chartCustomRange[t];
     render();
     return;
   }
@@ -3274,6 +3346,29 @@ document.getElementById('grid').addEventListener('click', e => {
   const deselectChartPointBtn = e.target.closest('[data-action="deselect-chart-point"]');
   if(deselectChartPointBtn){
     delete state.chartSelectedPoint[deselectChartPointBtn.dataset.ticker];
+    render();
+    return;
+  }
+  const applyChartRangeBtn = e.target.closest('[data-action="apply-chart-range"]');
+  if(applyChartRangeBtn){
+    const t = applyChartRangeBtn.dataset.ticker;
+    const fromEl = document.querySelector(`.chartRangeFrom[data-ticker="${t}"]`);
+    const toEl = document.querySelector(`.chartRangeTo[data-ticker="${t}"]`);
+    const from = fromEl ? fromEl.value : '', to = toEl ? toEl.value : '';
+    if(from && to && from <= to){
+      state.chartCustomRange[t] = { from, to };
+      render();
+    } else {
+      // Plage incomplète ou incohérente (date de fin avant la date de
+      // début) : on ne change rien plutôt que d'afficher un graphique vide
+      // ou trompeur — les deux dates restent telles que saisies.
+      alert('Merci de renseigner une date de début et une date de fin, la date de fin ne pouvant pas être antérieure à la date de début.');
+    }
+    return;
+  }
+  const resetChartRangeBtn = e.target.closest('[data-action="reset-chart-range"]');
+  if(resetChartRangeBtn){
+    delete state.chartCustomRange[resetChartRangeBtn.dataset.ticker];
     render();
     return;
   }
