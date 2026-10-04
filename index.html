@@ -128,6 +128,25 @@
      que quand la fiche est explicitement ouverte en édition — jamais le
      contenu informatif (badges, montants calculés, historiques affichés). */
   .card:not(.edit-open) .edit-field{display:none !important;}
+  /* Rappel d'export affiché quand vous tentez de fermer/quitter la page (voir
+     le gestionnaire "beforeunload" plus bas) : votre navigateur affichera
+     d'abord sa propre boîte de dialogue native (texte imposé par le
+     navigateur, pas personnalisable) vous demandant si vous voulez vraiment
+     quitter — si vous choisissez de rester, CE bloc-ci (personnalisé, avec un
+     vrai bouton "Exporter") est déjà visible pour vous permettre d'exporter
+     immédiatement avant de refermer pour de bon. Un site web ne peut jamais
+     intercepter la fermeture elle-même ni ajouter son propre bouton DANS la
+     boîte de dialogue native du navigateur — c'est une restriction de
+     sécurité commune à tous les navigateurs, pas une limite de ce widget.
+     Caché par défaut (attribut "hidden"), ex. via la classe .export-reminder-overlay */
+  .export-reminder-overlay{position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:1000; padding:16px;}
+  .export-reminder-box{background:var(--surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-md); padding:20px 22px; max-width:380px; font-size:.86rem; color:var(--ink-2);}
+  .export-reminder-box h3{margin:0 0 8px; font-size:1rem; color:var(--ink);}
+  .export-reminder-box .row{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;}
+  .export-reminder-box button{border:none; border-radius:var(--radius-sm); padding:8px 14px; font-size:.82rem; cursor:pointer; font-family:inherit;}
+  .export-reminder-box .btn-export{background:var(--accent); color:#fff; font-weight:600;}
+  .export-reminder-box .btn-close{background:var(--surface-2); color:var(--ink);}
+  .export-reminder-confirm{margin-top:10px; font-size:.78rem; color:var(--good);}
 </style>
 </head>
 <body>
@@ -284,6 +303,22 @@
   </div>
 
   <div id="grid" class="grid"></div>
+</div>
+
+<!-- Rappel d'export à la fermeture (voir le commentaire CSS .export-reminder-overlay
+     et le gestionnaire "beforeunload" dans le script ci-dessous) : masqué par
+     défaut, affiché juste avant que le navigateur ne propose sa propre boîte
+     de dialogue native de confirmation de fermeture. -->
+<div id="exportReminderOverlay" class="export-reminder-overlay" hidden>
+  <div class="export-reminder-box">
+    <h3>N'oubliez pas d'exporter vos données</h3>
+    <p style="margin:0;">Vos saisies (objectifs, dividendes, historique, position...) ne sont conservées que dans ce navigateur. Exportez-les avant de fermer la page pour pouvoir les réimporter à votre prochaine connexion.</p>
+    <div class="row">
+      <button type="button" class="btn-export" id="exportReminderExportBtn">💾 Exporter maintenant</button>
+      <button type="button" class="btn-close" id="exportReminderCloseBtn">Fermer ce message</button>
+    </div>
+    <div id="exportReminderConfirm" class="export-reminder-confirm" hidden>✅ Export lancé — vous pouvez fermer la page.</div>
+  </div>
 </div>
 
 <script>
@@ -3062,6 +3097,33 @@ document.getElementById('grid').addEventListener('input', e => {
   const el = e.target.closest('.histSeedInput');
   if(!el) return;
   renderSeedPreview(el.dataset.ticker);
+});
+
+// ============ Rappel d'export à la fermeture ============
+// Un navigateur ne permet jamais à un site web d'intercepter réellement sa
+// fermeture, ni d'ajouter un bouton personnalisé DANS sa boîte de dialogue
+// native de confirmation (texte imposé par le navigateur, non modifiable
+// depuis la page) — c'est une protection de sécurité standard. Ce qu'on PEUT
+// faire : déclencher cette boîte native via "beforeunload" (ce qui met en
+// pause la fermeture et laisse le choix de rester), et afficher en même temps
+// notre propre pop-up (#exportReminderOverlay, avec un vrai bouton
+// "Exporter") : si vous choisissez de rester dans la boîte native, notre
+// pop-up est déjà là pour vous permettre d'exporter avant de refermer pour de
+// bon. Si vous choisissez de quitter malgré tout, rien de plus n'est
+// possible côté site — la page se ferme normalement.
+window.addEventListener('beforeunload', (e) => {
+  document.getElementById('exportReminderConfirm').hidden = true;
+  document.getElementById('exportReminderOverlay').hidden = false;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+document.getElementById('exportReminderExportBtn').addEventListener('click', () => {
+  exportAllData();
+  document.getElementById('exportReminderConfirm').hidden = false;
+});
+document.getElementById('exportReminderCloseBtn').addEventListener('click', () => {
+  document.getElementById('exportReminderOverlay').hidden = true;
 });
 
 loadPersisted();
