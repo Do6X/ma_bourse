@@ -1478,11 +1478,27 @@ function computeVariations(ticker, currentClose){
     const windowStartStr = isoDate(windowStart);
     const inWindow = seances.filter(s => s.date >= windowStartStr);
     const seed = entry.seed.periods[p.key] || {};
-    let haut = seed.haut, bas = seed.bas;
-    inWindow.forEach(s => {
-      if(haut === undefined || haut === null || s.haut > haut) haut = s.haut;
-      if(bas === undefined || bas === null || s.bas < bas) bas = s.bas;
-    });
+    // Période entièrement couverte par vos séances réelles (même critère que
+    // pour la variation % ci-dessous) : au-delà de ce seuil, le plus haut/bas
+    // doit être calculé UNIQUEMENT sur la fenêtre de la période, sans mélange
+    // avec le seed, qui peut dater d'avant le début de cette fenêtre (c'était
+    // le bug : un plus bas ancien, hors de la période "1 semaine" par
+    // exemple, restait affiché comme le plus bas de la semaine indéfiniment).
+    const windowCovered = !!(earliest && earliest.date <= windowStartStr);
+    let haut, bas;
+    if(windowCovered){
+      haut = inWindow.length ? Math.max(...inWindow.map(s => s.haut)) : seed.haut;
+      bas = inWindow.length ? Math.min(...inWindow.map(s => s.bas)) : seed.bas;
+    } else {
+      // Période pas encore totalement couverte par vos séances : on part du
+      // seed (meilleure estimation disponible pour la partie non couverte)
+      // et on ne l'ajuste que si une séance réelle le confirme ou le dépasse.
+      haut = seed.haut; bas = seed.bas;
+      inWindow.forEach(s => {
+        if(haut === undefined || haut === null || s.haut > haut) haut = s.haut;
+        if(bas === undefined || bas === null || s.bas < bas) bas = s.bas;
+      });
+    }
     let var_pct, computed;
     if(latestClose === null || latestClose === undefined){
       // Aucune séance saisie et aucun cours de repli disponible (ex. fiche en
@@ -1490,7 +1506,7 @@ function computeVariations(ticker, currentClose){
       // impossible de recalculer la variation, on affiche seulement le seed.
       var_pct = seed.var_pct;
       computed = false;
-    } else if(earliest && earliest.date <= windowStartStr){
+    } else if(windowCovered){
       const ref = inWindow[0] || earliest;
       var_pct = ((latestClose - ref.clo) / ref.clo) * 100;
       computed = true;
