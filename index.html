@@ -9,6 +9,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Conseil Bourse">
 <meta name="theme-color" content="#f2f3ee">
+<!-- Limite la mise en cache HTTP de cette page elle-même (best-effort : ces
+     balises sont respectées par la plupart des navigateurs mais pas par tous
+     les relais/CDN intermédiaires — voir aussi la vérification de version
+     active ci-dessous, qui est le véritable filet de sécurité). -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <style>
   :root{
     /* Palette neutre + bleu système, dans l'esprit macOS/iOS (fond gris très
@@ -64,6 +71,20 @@
   .toolbar-row button{padding:9px 14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); font-size:.86rem; font-weight:600; cursor:pointer; transition:background .15s ease;}
   .toolbar-row button:hover{background:var(--surface-2);}
   .toolbar-row button[aria-expanded="true"]{background:var(--accent-soft); color:var(--accent); border-color:var(--accent-soft);}
+  /* Bandeau "nouvelle version disponible" : fixé en haut de l'écran (utile
+     surtout en lancement "écran d'accueil", où il n'y a pas d'autre moyen
+     visible de savoir qu'une version plus récente existe). */
+  .update-banner{position:sticky; top:0; z-index:50; display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; background:var(--accent); color:#fff; font-size:.85rem; font-weight:600; padding:9px 14px; text-align:center;}
+  /* Sans cette règle, `display:flex` ci-dessus l'emporterait sur la règle par
+     défaut du navigateur pour l'attribut [hidden] (même spécificité, feuille
+     d'auteur prioritaire) : le bandeau resterait visible à l'écran même une
+     fois `hidden` effectivement posé en JS. */
+  .update-banner[hidden]{display:none;}
+  .update-banner button{padding:5px 12px; border:1px solid rgba(255,255,255,.6); border-radius:var(--radius-sm); background:rgba(255,255,255,.15); color:#fff; font-size:.82rem; font-weight:600; cursor:pointer;}
+  .update-banner button:hover{background:rgba(255,255,255,.28);}
+  .update-banner button.dismiss{padding:5px 9px; border-color:transparent; background:transparent; opacity:.85;}
+  .refresh-check-btn{padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font-size:.78rem; font-weight:600; cursor:pointer; white-space:nowrap;}
+  .refresh-check-btn:hover{background:var(--surface-2);}
   .compare-table{width:100%; border-collapse:collapse; font-size:.8rem; background:var(--surface); border-radius:var(--radius-md); overflow:hidden;}
   .compare-table th, .compare-table td{padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);}
   .compare-table th{background:var(--surface-2); text-align:left;}
@@ -189,6 +210,15 @@
 </style>
 </head>
 <body>
+<!-- Bandeau de nouvelle version : utile surtout en lancement "écran d'accueil"
+     (iOS/Android), où il n'y a ni barre d'adresse ni bouton "recharger" du
+     navigateur pour aller chercher une version plus récente déployée sur
+     GitHub Pages — voir checkForUpdate() plus bas. -->
+<div id="updateBanner" class="update-banner" hidden>
+  🔄 Une nouvelle version du widget est disponible.
+  <button id="updateBannerReloadBtn" type="button">Recharger maintenant</button>
+  <button id="updateBannerDismissBtn" type="button" class="dismiss" title="Ignorer pour cette session">✕</button>
+</div>
 <div class="wrap">
   <h1>Widget Conseil d'Investissement</h1>
   <p class="sub">Frontend minimal consommant le backend en direct (<code>GET /api/advice</code>, <code>GET /api/alerts</code>) — démo de référence, pas destinée à remplacer le tableau de bord de démonstration.</p>
@@ -204,7 +234,9 @@
          si une URL différente a été enregistrée sur cet appareil. -->
     URL du backend : <input id="apiBase" value="https://conseil-bourse-api.onrender.com" placeholder="https://votre-backend.onrender.com" style="font-family:monospace; padding:4px 8px; border-radius:6px; border:1px solid var(--border); width:260px;">
     <span class="status"><span class="dot" id="statusDot"></span><span id="statusText">non vérifié</span></span>
+    <button id="checkUpdateBtn" type="button" class="refresh-check-btn" title="Vérifier si une version plus récente du widget a été déployée">🔄 Vérifier les mises à jour</button>
     <div style="margin-top:6px; font-size:.76rem; color:var(--ink-muted);">Enregistrée automatiquement sur cet appareil (rien n'est envoyé ailleurs) — à saisir une seule fois par appareil. Pré-remplie avec le backend actuel par défaut.</div>
+    <div id="updateCheckResult" class="hist-hint" style="margin-top:4px;"></div>
   </div>
 
   <!-- Barre d'outils secondaire : actions occasionnelles, repliées par défaut
@@ -215,6 +247,7 @@
     <button id="askToggle" type="button" aria-expanded="false" aria-controls="askPanel">💬 Poser une question</button>
     <button id="agendaToggle" type="button" aria-expanded="false" aria-controls="agendaPanel">📅 Agenda</button>
     <button id="archivesToggle" type="button" aria-expanded="false" aria-controls="archivesPanel">🗄️ Archives</button>
+    <button id="pressReviewToggle" type="button" aria-expanded="false" aria-controls="pressReviewPanel">📰 Revue de presse</button>
   </div>
 
   <div id="settingsPanel" class="config" hidden style="margin-bottom:14px;">
@@ -302,6 +335,12 @@
     <div id="archivesPanelBody"></div>
   </div>
 
+  <div id="pressReviewPanel" class="config" hidden style="margin-bottom:14px;">
+    <label style="display:block; margin-bottom:6px; font-weight:600;">📰 Revue de presse</label>
+    <p class="hist-hint">Ce widget ne peut pas résumer lui-même des actualités (pas de backend prévu pour ça) : pour chaque valeur ci-dessous, un lien ouvre directement une recherche d'actualités récentes sur une vraie source, dans un nouvel onglet. Si au moins une valeur est cochée (case « comparer » sur les fiches), seules les valeurs sélectionnées sont listées ici ; sinon, toutes vos valeurs suivies le sont.</p>
+    <div id="pressReviewBody"></div>
+  </div>
+
   <div class="config" style="margin-bottom:18px;">
     <label style="display:block; margin-bottom:6px; font-weight:600;">Vérification Boursorama — toutes les valeurs suivies</label>
     <div class="hist-paste-row" style="margin-top:0;">
@@ -372,6 +411,15 @@
 </div>
 
 <script>
+// Identifiant de version de CE fichier — à incrémenter à chaque nouvelle
+// version déployée sur GitHub Pages (changer la date/l'heure suffit). Sert
+// uniquement à checkForUpdate() ci-dessous pour détecter qu'une version plus
+// récente a été publiée pendant qu'une ancienne version restait affichée
+// (typiquement en lancement "écran d'accueil" iOS/Android, où il n'y a ni
+// barre d'adresse ni bouton "recharger" pour forcer la récupération d'une
+// nouvelle version soi-même).
+const APP_VERSION = '2026-10-11-1';
+
 const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set(), dailyShowAll: false, weeklyShowAll: false };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
@@ -395,6 +443,60 @@ function persistTickers(){
 }
 function persistSortMode(){
   try{ localStorage.setItem('stockAdvice.sortMode', state.sortMode); }catch(e){}
+}
+
+// ============ Détection d'une nouvelle version déployée ============
+// Problème visé : une fois le widget ajouté à l'écran d'accueil (iOS/Android)
+// et lancé en plein écran depuis cette icône, il n'y a plus ni barre
+// d'adresse ni bouton "recharger" de navigateur pour aller chercher une
+// version plus récente déployée sur GitHub Pages — la page peut alors rester
+// bloquée sur une ancienne version pendant des jours, avec des corrections
+// pourtant déjà en ligne mais invisibles. Les balises <meta> Cache-Control
+// dans <head> aident mais ne sont qu'un conseil que certains relais/CDN
+// ignorent ; cette vérification active est le véritable filet de sécurité :
+// elle re-télécharge CE fichier en forçant l'ignorance du cache (cache:
+// 'no-store' + paramètre d'URL unique) et compare la version qu'il contient
+// réellement à celle en cours d'affichage.
+function checkForUpdate(silent){
+  // Tout est protégé par un try/catch englobant (même l'appel à fetch()
+  // lui-même, pas seulement sa promesse) : sur un navigateur ancien sans
+  // fetch(), ou tout autre souci inattendu, cette vérification ne doit
+  // jamais empêcher le reste du widget de démarrer normalement — exactement
+  // le même principe de prudence que checkHealth() ci-dessus.
+  try{
+    const sep = location.pathname.includes('?') ? '&' : '?';
+    const url = location.pathname + sep + '_check=' + Date.now();
+    fetch(url, { cache: 'no-store' })
+      .then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(text => {
+        const m = text.match(/const APP_VERSION\s*=\s*'([^']+)'/);
+        const remoteVersion = m ? m[1] : null;
+        if(remoteVersion && remoteVersion !== APP_VERSION){
+          document.getElementById('updateBanner').hidden = false;
+        } else if(!silent){
+          showUpdateCheckResult('✅ Vous avez déjà la dernière version du widget.');
+        }
+      })
+      .catch(() => {
+        if(!silent) showUpdateCheckResult('⚠️ Impossible de vérifier pour le moment (vérifiez votre connexion).');
+      });
+  }catch(e){
+    if(!silent) showUpdateCheckResult('⚠️ Impossible de vérifier pour le moment (vérifiez votre connexion).');
+  }
+}
+function showUpdateCheckResult(msg){
+  const el = document.getElementById('updateCheckResult');
+  if(!el) return;
+  el.textContent = msg;
+  setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 6000);
+}
+// Recharge en contournant le cache : on ne peut pas compter sur
+// location.reload(true) (paramètre ignoré par la plupart des navigateurs
+// récents) — ajouter un paramètre d'URL inédit force en revanche le
+// navigateur (et la plupart des CDN) à traiter la requête comme une
+// ressource jamais vue, donc à aller la rechercher pour de vrai.
+function forceReload(){
+  location.replace(location.pathname + '?v=' + Date.now());
 }
 
 // Prix de revient (coût d'achat moyen par action) — saisi par vous, stocké
@@ -2848,6 +2950,7 @@ function render(){
     if(cb) cb.checked = true;
   });
   updateCompareBar();
+  refreshPressReviewPanelIfOpen();
   renderAgenda();
 }
 
@@ -2957,6 +3060,52 @@ function refreshArchivesPanelIfOpen(){
     const n = Object.keys(loadArchivedTickers()).length;
     toggle.textContent = `🗄️ Archives${n ? ' (' + n + ')' : ''}`;
   }
+}
+
+// ============ Revue de presse (liens rapides, pas de résumé généré) ============
+// Volontairement 100% frontend : pas de clé API ni de backend à interroger
+// pour aller chercher de vraies actualités, donc pas de coût ni de
+// redéploiement. Pour chaque valeur concernée, un lien ouvre une recherche
+// d'actualités récentes toute faite dans un nouvel onglet — à lire soi-même,
+// le widget ne résume ni n'invente rien. De vraies balises <a target="_blank">
+// (et non des window.open() en boucle) : ouvrir plusieurs liens d'un coup
+// via window.open() dans une boucle est bloqué par les navigateurs
+// (anti-popup), alors que des liens cliqués un par un ne le sont jamais.
+function pressReviewTargets(){
+  const selected = sortedTickers().filter(t => state.compareSelected.has(t));
+  return selected.length ? selected : sortedTickers();
+}
+function pressReviewRows(){
+  const targets = pressReviewTargets();
+  if(!targets.length){
+    return `<p class="hist-hint">Ajoutez au moins une valeur pour voir apparaître ses liens d'actualités ici.</p>`;
+  }
+  const sourceUrls = loadSourceUrls();
+  const nomManuelMap = loadNomManuel();
+  return `<div style="display:flex; flex-direction:column; gap:8px;">
+    ${targets.map(t => {
+      const entry = state.data[t];
+      const nomApi = entry && entry.data && entry.data.nom;
+      const nom = nomManuelMap[t] || nomApi || t;
+      const newsUrl = 'https://news.google.com/search?' + new URLSearchParams({ q: nom, hl: 'fr', gl: 'FR', ceid: 'FR:fr' }).toString();
+      const ficheUrl = sourceUrls[t];
+      return `<div class="hist-source" style="justify-content:space-between;">
+        <span>${escapeHtml(nom)} <span style="color:var(--ink-muted); font-size:.78rem;">${t}</span></span>
+        <span style="display:flex; gap:8px; flex-wrap:wrap;">
+          <a href="${escapeHtml(newsUrl)}" target="_blank" rel="noopener">📰 Google Actualités</a>
+          ${ficheUrl ? `<a href="${escapeHtml(ficheUrl)}" target="_blank" rel="noopener">📈 Fiche Boursorama</a>` : ''}
+        </span>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+function renderPressReviewPanel(){
+  const body = document.getElementById('pressReviewBody');
+  if(body) body.innerHTML = pressReviewRows();
+}
+function refreshPressReviewPanelIfOpen(){
+  const panel = document.getElementById('pressReviewPanel');
+  if(panel && !panel.hidden) renderPressReviewPanel();
 }
 
 function refreshAll(){
@@ -3285,6 +3434,7 @@ document.getElementById('grid').addEventListener('change', e => {
   const t = cb.dataset.ticker;
   if(cb.checked) state.compareSelected.add(t); else state.compareSelected.delete(t);
   updateCompareBar();
+  refreshPressReviewPanelIfOpen();
 });
 
 document.getElementById('compareBtn').addEventListener('click', () => {
@@ -3409,6 +3559,12 @@ document.getElementById('settingsToggle').addEventListener('click', e => {
   e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
 });
 
+document.getElementById('checkUpdateBtn').addEventListener('click', () => checkForUpdate(false));
+document.getElementById('updateBannerReloadBtn').addEventListener('click', forceReload);
+document.getElementById('updateBannerDismissBtn').addEventListener('click', () => {
+  document.getElementById('updateBanner').hidden = true;
+});
+
 document.getElementById('askToggle').addEventListener('click', e => {
   const panel = document.getElementById('askPanel');
   panel.hidden = !panel.hidden;
@@ -3433,6 +3589,13 @@ document.getElementById('archivesPanel').addEventListener('click', e => {
   const unarchiveBtn = e.target.closest('[data-action="unarchive-ticker"]');
   if(!unarchiveBtn) return;
   unarchiveTicker(unarchiveBtn.dataset.ticker);
+});
+
+document.getElementById('pressReviewToggle').addEventListener('click', e => {
+  const panel = document.getElementById('pressReviewPanel');
+  panel.hidden = !panel.hidden;
+  e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  if(!panel.hidden) renderPressReviewPanel();
 });
 
 document.getElementById('dailyUpdateToggle').addEventListener('click', e => {
@@ -3932,6 +4095,7 @@ document.getElementById('exportReminderCloseBtn').addEventListener('click', () =
 loadPersisted();
 document.getElementById('sortSelect').value = state.sortMode;
 checkHealth();
+checkForUpdate(true);
 render();
 refreshArchivesPanelIfOpen();
 // Mise à jour une seule fois à l'ouverture de la page, puis plus aucun appel
