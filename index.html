@@ -422,7 +422,7 @@
 // (typiquement en lancement "écran d'accueil" iOS/Android, où il n'y a ni
 // barre d'adresse ni bouton "recharger" pour forcer la récupération d'une
 // nouvelle version soi-même).
-const APP_VERSION = '2026-10-17-1';
+const APP_VERSION = '2026-10-17-3';
 
 const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set(), dailyShowAll: false, weeklyShowAll: false };
 
@@ -735,8 +735,19 @@ function parseAgendaBoursoramaPaste(text, today){
   const events = [];
   matches.forEach((mt, i) => {
     let label = cleaned.slice(mt.end, matches[i + 1] ? matches[i + 1].start : cleaned.length);
+    // Sans ancre suivante (dernier événement de la liste, ou agenda collé
+    // au milieu d'une page plus large — voir parseWeeklyFullPaste), rien ne
+    // borne naturellement la fin du libellé : Boursorama laisse toujours
+    // une ligne vide après chaque événement avant la section suivante, donc
+    // on s'arrête à la première ligne vide rencontrée plutôt que d'avaler
+    // tout ce qui suit (ex. le reste de la fiche).
+    label = label.replace(/[\r\n]\s*[\r\n][\s\S]*$/, '');
     label = label.replace(/^[\s\r\n]*\d{1,2}[:h]\d{2}/, ''); // heure éventuelle en tête
     label = label.replace(/[\*\-•][\s\r\n]*$/, '').replace(/\s+/g, ' ').trim();
+    // Filet de sécurité si, malgré tout, aucune ligne vide n'a été trouvée
+    // (format différent) : mieux vaut un libellé tronqué qu'un calendrier
+    // illisible contenant la moitié de la page.
+    if(label.length > 140) label = label.slice(0, 140).trim() + '…';
     if(!label) return;
     let year = todayUtc.getUTCFullYear();
     let candidate = new Date(Date.UTC(year, mt.month - 1, mt.day));
@@ -745,6 +756,81 @@ function parseAgendaBoursoramaPaste(text, today){
   });
   events.sort((a, b) => (a.date < b.date ? -1 : (a.date > b.date ? 1 : 0)));
   return events;
+}
+// Compare un calendrier d'agenda fraîchement collé à celui déjà enregistré,
+// pour répondre à la demande : être prévenu quand une information d'agenda
+// a changé ou a été ajoutée, sans avoir à comparer soi-même visuellement.
+// - "ajoutés" : une date qui n'existait pas encore dans le calendrier enregistré.
+// - "modifiés" : une date déjà connue, mais dont le libellé a changé (ex.
+//   "Résultats annuels" précisé en "Résultats annuels 2026").
+// - "disparus" : une date encore future qui était enregistrée mais
+//   n'apparaît plus dans le nouveau collage (reportée/annulée) — un
+//   événement simplement passé (antérieur à aujourd'hui) n'est PAS compté
+//   comme disparu : c'est normal qu'il ne figure plus sur la fiche.
+function diffAgendaEvents(oldEvents, newEvents, todayStr){
+  todayStr = todayStr || isoDate(new Date());
+  const oldByDate = new Map((oldEvents || []).map(e => [e.date, e.label]));
+  const newByDate = new Map((newEvents || []).map(e => [e.date, e.label]));
+  const added = (newEvents || []).filter(e => !oldByDate.has(e.date));
+  const changed = (newEvents || [])
+    .filter(e => oldByDate.has(e.date) && oldByDate.get(e.date) !== e.label)
+    .map(e => ({ date: e.date, oldLabel: oldByDate.get(e.date), newLabel: e.label }));
+  const removed = (oldEvents || []).filter(e => e.date >= todayStr && !newByDate.has(e.date));
+  return { added, changed, removed };
+}
+// Message lisible résumant la comparaison ci-dessus, affiché juste après
+// l'analyse d'un collage contenant l'agenda (collage individuel ou collage
+// complet de la fiche) — c'est la réponse directe à la demande "indiquer si
+// une information a changé ou a été ajoutée". Toujours affiché en texte brut
+// (.textContent, jamais .innerHTML) : les libellés n'ont donc pas besoin
+// d'être échappés ici (les échapper quand même afficherait littéralement
+// "&amp;" etc. au lieu de "&" dans un libellé qui en contiendrait un).
+function describeAgendaDiff(diff, totalCount){
+  if(!diff.added.length && !diff.changed.length && !diff.removed.length){
+    return `📅 Agenda : ${totalCount} évènement(s) à venir, rien de nouveau depuis la dernière comparaison.`;
+  }
+  const parts = [];
+  if(diff.added.length){
+    parts.push(`🆕 ${diff.added.length} ajouté(s) : ${diff.added.map(e => `${frDate(e.date)} — ${e.label}`).join(' ; ')}`);
+  }
+  if(diff.changed.length){
+    parts.push(`✏️ ${diff.changed.length} modifié(s) : ${diff.changed.map(e => `${frDate(e.date)} — « ${e.oldLabel} » → « ${e.newLabel} »`).join(' ; ')}`);
+  }
+  if(diff.removed.length){
+    parts.push(`❌ ${diff.removed.length} disparu(s) (reporté ou annulé ?) : ${diff.removed.map(e => `${frDate(e.date)} — ${e.label}`).join(' ; ')}`);
+  }
+  return `📅 Agenda — ${parts.join(' · ')}`;
+}
+// Analyse le bloc « Consensus des analystes au JJ/MM/AA* » d'une fiche
+// Boursorama, qui regroupe sur quelques lignes la date commune, l'objectif
+// de cours à 3 mois et la note de consensus (juste avant l'échelle "1.
+// Acheter ... 5. Vendre") — voir l'exemple Air Liquide ayant servi de base à
+// cette analyse. Un bloc partiel (ex. objectif seul, sans consensus) reste
+// exploité au mieux : chaque information est cherchée indépendamment des
+// autres plutôt que d'exiger le bloc complet.
+function parseObjectifConsensusBoursoramaPaste(text){
+  const t = String(text || '');
+  const result = {};
+  const dateMatch = /consensus des analystes au\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i.exec(t);
+  if(dateMatch){
+    let yy = parseInt(dateMatch[3], 10);
+    if(dateMatch[3].length === 2) yy += 2000;
+    const mm = String(parseInt(dateMatch[2], 10)).padStart(2, '0');
+    const dd = String(parseInt(dateMatch[1], 10)).padStart(2, '0');
+    result.date = `${yy}-${mm}-${dd}`;
+  }
+  const objMatch = /objectif de cours 3\s*mois\s*:\s*([\d\s ]+[.,]\d+)/i.exec(t);
+  if(objMatch){
+    result.objectif = parseFloat(objMatch[1].replace(/[\s ]/g, '').replace(',', '.'));
+  }
+  // La note de consensus (1 à 5) suit immédiatement la ligne "Potentiel :
+  // ...%", juste avant l'échelle "1. Acheter" — c'est cet ancrage qui permet
+  // de la distinguer de tout autre nombre présent sur la fiche.
+  const consMatch = /potentiel\s*:\s*[+-]?[\d\s ]+[.,]\d+\s*%\s*([\d]+[.,]\d+)\s*(?:\r?\n)+\s*1\.\s*Acheter/i.exec(t);
+  if(consMatch){
+    result.consensus = parseFloat(consMatch[1].replace(',', '.'));
+  }
+  return (result.date || result.objectif !== undefined || result.consensus !== undefined) ? result : null;
 }
 // Échelle Boursorama du consensus des analystes (note moyenne, 1 = meilleur
 // avis) : chaque tranche entière correspond à un libellé, borne basse
@@ -1029,6 +1115,14 @@ const DIVIDEND_MAX_COLUMNS = 4;
 
 function parseDividendePaste(text){
   if(!text) return {columns: [], rows: {}};
+  // Ancrage sur l'en-tête « Évolution des prévisions » quand il est présent
+  // (cas d'un collage de fiche complète, voir parseWeeklyFullPaste) : sans
+  // cela, les libellés de ligne ("PER", "Rendement"...) pourraient en théorie
+  // matcher un autre passage de la page situé avant ce tableau. Repli sur le
+  // texte entier si l'en-tête est absent (collage du seul tableau, usage
+  // historique du bouton "Analyser" sur la fiche individuelle).
+  const anchorM = /[ÉE]volution des pr[ée]visions/i.exec(text);
+  text = anchorM ? text.slice(anchorM.index + anchorM[0].length) : text;
   const found = DIVIDEND_ROW_PATTERNS.map(p => {
     const m = p.re.exec(text);
     return m ? {key: p.key, start: m.index, end: m.index + m[0].length} : null;
@@ -1041,7 +1135,17 @@ function parseDividendePaste(text){
   const columns = yearMatches.map(m => (m[1] ? 'Estim. ' : '') + m[2]);
   const rows = {};
   found.forEach((f, i) => {
-    const segEnd = (i + 1 < found.length) ? found[i+1].start : text.length;
+    let segEnd = (i + 1 < found.length) ? found[i+1].start : text.length;
+    if(i + 1 >= found.length){
+      // Dernière ligne reconnue (en général "PER") : quand on a ancré sur
+      // « Évolution des prévisions » (collage de fiche complète), rien ne la
+      // borne naturellement côté droit — sans ça, tout le reste de la page
+      // (agenda, « Données historiques », MM20/RSI14...) serait avalé et lu
+      // comme autant de valeurs de PER. Boursorama laisse toujours une ligne
+      // vide après ce tableau avant la section suivante, donc on s'arrête là.
+      const blank = /[\r\n]\s*[\r\n]/.exec(text.slice(f.end));
+      if(blank) segEnd = f.end + blank.index;
+    }
     const segment = text.slice(f.end, segEnd);
     const nums = (segment.match(/-?\d[\d\s ]*[.,]\d+/g) || [])
       .map(s => parseFloat(s.replace(/[\s ]/g, '').replace(',', '.')));
@@ -1373,7 +1477,7 @@ function agendaManuelBox(ticker){
     <p class="hist-hint" style="margin:4px 0 0;">Votre plan API actuel ne fournit pas ces dates automatiquement — renseignez-les ici si vous les connaissez (ex. depuis la fiche Boursorama) ; une date saisie ici prime toujours sur celle de l'API.</p>
     <button class="hist-toggle${pasteOpen ? ' open' : ''}" data-action="toggle-agenda-paste" data-ticker="${ticker}" style="margin-top:8px;">📋 ${calendrier.length ? 'Modifier le calendrier collé depuis Boursorama' : 'Coller le calendrier des publications (Boursorama)'}<span class="chevron">›</span></button>
     <div ${pasteOpen ? '' : 'hidden'}>
-      <p class="hist-hint">Sur la fiche Boursorama de la valeur, repérez le bloc « Événements à venir », sélectionnez-le et collez-le ci-dessous tel quel (résultats semestriels/annuels, chiffre d'affaires trimestriel...) : toutes les dates à venir qu'il contient sont reconnues et ajoutées d'un coup, avec leur libellé d'origine.</p>
+      <p class="hist-hint">Sur la fiche Boursorama de la valeur, repérez le bloc « Événements à venir », sélectionnez-le et collez-le ci-dessous tel quel (résultats semestriels/annuels, chiffre d'affaires trimestriel...) : toutes les dates à venir qu'il contient sont reconnues et ajoutées d'un coup, avec leur libellé d'origine. Le résultat vous indique ce qui est nouveau ou a changé par rapport au calendrier déjà enregistré.</p>
       <div class="hist-paste-row">
         <textarea class="agenda-paste" data-ticker="${ticker}" placeholder="Collez ici le bloc « Événements à venir » copié depuis Boursorama"></textarea>
         <button data-action="parse-agenda-paste" data-ticker="${ticker}">Analyser</button>
@@ -1787,6 +1891,16 @@ const PERIOD_LABEL_PATTERNS = [
 
 function parseBoursoramaPaste(text){
   if(!text) return {};
+  // Quand le texte collé contient aussi d'autres sections de la fiche (ex.
+  // collage complet de la page, voir parseWeeklyFullPaste), "3 mois" peut
+  // apparaître ailleurs qu'au bon endroit (ex. dans "Objectif de cours 3
+  // mois"). On limite donc la recherche des libellés de période à ce qui
+  // suit l'en-tête "Données historiques" quand il est présent, pour ne
+  // jamais confondre un "3 mois" du tableau de périodes avec un "3 mois"
+  // trouvé ailleurs sur la page. Repli sur le texte entier si cet en-tête
+  // est absent (collage ne contenant que le tableau, comme auparavant).
+  const anchorM = /donn[ée]es historiques/i.exec(text);
+  text = anchorM ? text.slice(anchorM.index + anchorM[0].length) : text;
   const found = PERIOD_LABEL_PATTERNS.map(p => {
     const m = p.re.exec(text);
     return m ? {key: p.key, start: m.index, end: m.index + m[0].length} : null;
@@ -2125,7 +2239,16 @@ function saveDailyUpdates(){
 // un autre jour que celui de la 5e colonne.
 function parseWeeklyHistoriquePaste(text){
   if(!text) return null;
-  const lines = String(text).split('\n').map(l => l.replace(/\r$/,''));
+  const allLines = String(text).split('\n').map(l => l.replace(/\r$/,''));
+  // Repère l'en-tête "Historique 5 jours" pour ignorer tout ce qui le
+  // précède (ex. le reste de la fiche, en cas de collage complet de la page
+  // — voir parseWeeklyFullPaste) : sans ça, la ligne "Der. 173,16" du résumé
+  // du jour (une seule valeur) pourrait être confondue avec la vraie ligne
+  // "Der." du tableau 5 jours plus bas. Repli sur le texte entier si cet
+  // en-tête n'est pas présent (collage ne contenant que le tableau, comme
+  // auparavant).
+  const anchorIdx = allLines.findIndex(l => /historique\s*5\s*jours/i.test(l));
+  const lines = anchorIdx >= 0 ? allLines.slice(anchorIdx) : allLines;
   const headerText = lines.slice(0, 4).join(' ');
   // Pas de \b avant le jour : sur un copier-coller direct depuis la page, le
   // jour est collé sans espace au nom du mois qui le précède (ex.
@@ -2218,6 +2341,15 @@ function weeklyUpdateBlocks(){
     }).join('');
     return `<div class="weekly-block" data-ticker="${t}" style="margin-bottom:16px; padding-bottom:12px; border-bottom:1px dashed var(--border);">
       <div style="font-weight:600; margin-bottom:4px;">${nom ? nom + ' ' : ''}<span style="color:var(--ink-muted); font-size:.78rem; font-weight:400;">${t}</span></div>
+      <div class="hist-block" style="margin-bottom:10px; padding:8px; border:1px dashed var(--accent); border-radius:8px; background:var(--accent-soft);">
+        <div style="font-weight:600; font-size:.82rem; margin-bottom:4px;">📋 Coller toute la fiche (optionnel, en plus des cases ci-dessous)</div>
+        <p class="hist-hint" style="margin:0 0 6px;">Sélectionnez une large portion de la fiche Boursorama de ${t} (depuis le haut jusqu'à « Données historiques » par exemple) et collez-la ici : l'historique 5 jours, l'historique par périodes, l'objectif de cours, le consensus des analystes, l'agenda et les dividendes (tableau « Évolution des prévisions ») sont reconnus et remplis automatiquement ci-dessous. Les séances et l'historique restent à enregistrer comme d'habitude ; l'agenda et les dividendes, eux, sont enregistrés directement (avec, pour l'agenda, le détail de ce qui est nouveau ou a changé).</p>
+        <div class="hist-paste-row">
+          <textarea class="weeklyFullPasteInput" data-ticker="${t}" placeholder="Collez ici une large portion de la fiche Boursorama de ${t}" style="min-height:70px;"></textarea>
+          <button data-action="parse-weekly-full-paste" data-ticker="${t}">Tout analyser</button>
+        </div>
+        <div class="weeklyFullPasteResult hist-hint" data-ticker="${t}" style="margin-top:4px; white-space:pre-line;"></div>
+      </div>
       <textarea class="weeklyPasteInput" data-ticker="${t}" placeholder="Collez ici le tableau « Historique 5 jours » copié depuis la fiche Boursorama de ${t}" style="min-height:48px;"></textarea>
       <div style="overflow-x:auto; margin-top:6px;">
         <table class="hist-table weeklyGrid" data-ticker="${t}">
@@ -2373,6 +2505,78 @@ function saveWeeklyBlock(ticker){
     notes.push(`Consensus : ${fmt(cons.value,2)} (au ${frDate(cons.date || fridayOfThisWeek())})`);
   }
   return { count, notes };
+}
+
+// Collage "toute la fiche" (panneau hebdomadaire) : une seule case où coller
+// une large portion de la fiche Boursorama, qui remplit automatiquement
+// tout ce qu'elle reconnaît parmi l'historique 5 jours, l'historique par
+// périodes, l'objectif/consensus (+ leur date commune) et l'agenda — en
+// réutilisant exactement les mêmes analyseurs que les cases individuelles
+// ci-dessous, qui restent disponibles en secours si un bloc n'est pas
+// reconnu (ex. mise en page Boursorama différente). Séances et historique
+// ne sont que REMPLIS ici (comme les cases qu'ils complètent) : il faut
+// toujours cliquer sur « Enregistrer » pour les valider. L'agenda, lui, n'a
+// pas d'étape de validation séparée dans ce panneau : il est comparé à ce
+// qui était déjà enregistré puis sauvegardé directement, avec le détail de
+// ce qui est nouveau ou a changé (c'est la demande d'origine).
+function parseWeeklyFullPaste(ticker, text){
+  const notes = [];
+  const seances = parseWeeklyHistoriquePaste(text);
+  if(seances){
+    fillWeeklyBlock(ticker, seances);
+    notes.push('📈 Historique 5 jours reconnu — champs remplis ci-dessous (à vérifier puis « Enregistrer cette semaine »).');
+  }
+  const periods = parseBoursoramaPaste(text);
+  const periodCount = Object.keys(periods).length;
+  if(periodCount){
+    fillSeedInputs(ticker, periods, 'weeklyHistSeedInput');
+    renderSeedPreview(ticker, 'weeklyHistPreview', 'weeklyHistSeedInput');
+    notes.push(`📊 Historique par périodes reconnu (${periodCount} période${periodCount>1?'s':''}) — à vérifier dans « Historique de référence » ci-dessous puis enregistrer.`);
+  }
+  const oc = parseObjectifConsensusBoursoramaPaste(text);
+  if(oc){
+    const objEl = document.querySelector(`.weeklyObjectifInput[data-ticker="${ticker}"]`);
+    const objDateEl = document.querySelector(`.weeklyObjectifDateInput[data-ticker="${ticker}"]`);
+    const consEl = document.querySelector(`.weeklyConsensusInput[data-ticker="${ticker}"]`);
+    const consDateEl = document.querySelector(`.weeklyConsensusDateInput[data-ticker="${ticker}"]`);
+    const parts = [];
+    if(oc.objectif !== undefined && !isNaN(oc.objectif)){
+      if(objEl) objEl.value = oc.objectif;
+      if(oc.date && objDateEl) objDateEl.value = oc.date;
+      parts.push(`objectif ${fmtPrix(oc.objectif)}`);
+    }
+    if(oc.consensus !== undefined && !isNaN(oc.consensus)){
+      if(consEl) consEl.value = oc.consensus;
+      if(oc.date && consDateEl) consDateEl.value = oc.date;
+      parts.push(`consensus ${fmt(oc.consensus,2)}`);
+    }
+    if(parts.length){
+      notes.push(`🎯 ${parts.join(' et ')} reconnu(s)${oc.date ? ' (au ' + frDate(oc.date) + ')' : ''} — champs remplis ci-dessus (à vérifier puis « Enregistrer cette semaine »).`);
+    }
+  }
+  const events = parseAgendaBoursoramaPaste(text);
+  if(events.length){
+    const oldEvents = loadAgendaCalendrierManuel()[ticker] || [];
+    const diff = diffAgendaEvents(oldEvents, events);
+    saveAgendaCalendrierManuel(ticker, events);
+    notes.push(describeAgendaDiff(diff, events.length));
+  }
+  // Dividendes ("Évolution des prévisions") : comme pour l'agenda, aucune
+  // case de relecture n'existe dans le panneau hebdomadaire (seule la fiche
+  // individuelle en propose une), donc on enregistre directement — l'utilisateur
+  // peut toujours corriger ensuite via « Saisir/Modifier les données de
+  // dividende » sur la fiche.
+  const dividende = parseDividendePaste(text);
+  if(dividende.columns && dividende.columns.length){
+    const oldDividende = loadDividendes()[ticker];
+    const unchanged = oldDividende && JSON.stringify(oldDividende) === JSON.stringify(dividende);
+    saveDividendes(ticker, dividende);
+    notes.push(`💶 Dividendes reconnus (${dividende.columns.join(', ')})` + (unchanged ? ' — identiques aux données déjà enregistrées.' : (oldDividende ? ' — mis à jour sur la fiche.' : ' — enregistrés sur la fiche (1ère saisie).')));
+  }
+  if(!notes.length){
+    notes.push("⚠️ Aucune information reconnue dans ce collage — vérifiez que vous avez bien copié une bonne partie de la fiche Boursorama, ou utilisez les cases de collage individuelles ci-dessous.");
+  }
+  return notes;
 }
 
 // Date de début de fenêtre pour une période du tableau d'historique (même
@@ -3794,6 +3998,16 @@ document.getElementById('weeklyUpdatePanel').addEventListener('input', e => {
   }
 });
 document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
+  const fullPasteBtn = e.target.closest('[data-action="parse-weekly-full-paste"]');
+  if(fullPasteBtn){
+    const t = fullPasteBtn.dataset.ticker;
+    const textEl = document.querySelector(`.weeklyFullPasteInput[data-ticker="${t}"]`);
+    const notes = parseWeeklyFullPaste(t, textEl ? textEl.value : '');
+    const resultEl = document.querySelector(`.weeklyFullPasteResult[data-ticker="${t}"]`);
+    if(resultEl) resultEl.textContent = notes.join('\n');
+    render();
+    return;
+  }
   const btn = e.target.closest('[data-action="save-weekly"]');
   if(btn){
     const t = btn.dataset.ticker;
@@ -4176,9 +4390,18 @@ document.getElementById('grid').addEventListener('click', e => {
       if(resultEl) resultEl.textContent = "⚠️ Aucun événement reconnu — vérifiez que vous avez bien collé le bloc « Événements à venir » complet.";
       return;
     }
+    // Compare au calendrier déjà enregistré AVANT de l'écraser, pour pouvoir
+    // signaler ce qui est nouveau ou a changé (la demande d'origine).
+    const oldEvents = loadAgendaCalendrierManuel()[t] || [];
+    const diff = diffAgendaEvents(oldEvents, events);
     saveAgendaCalendrierManuel(t, events);
     state.agendaPasteOpenFor.add(t);
     render();
+    // render() reconstruit entièrement la fiche : on ré-applique le message
+    // de comparaison juste après, sur le nouvel élément (l'ancien n'existe
+    // plus dans le DOM).
+    const resultElAfter = document.querySelector(`.agenda-paste-result[data-ticker="${t}"]`);
+    if(resultElAfter) resultElAfter.textContent = describeAgendaDiff(diff, events.length);
     return;
   }
   const clearAgendaBtn = e.target.closest('[data-action="clear-agenda-calendrier"]');
