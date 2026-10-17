@@ -422,9 +422,9 @@
 // (typiquement en lancement "écran d'accueil" iOS/Android, où il n'y a ni
 // barre d'adresse ni bouton "recharger" pour forcer la récupération d'une
 // nouvelle version soi-même).
-const APP_VERSION = '2026-10-17-3';
+const APP_VERSION = '2026-10-17-4';
 
-const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set(), dailyShowAll: false, weeklyShowAll: false };
+const state = { tickers: [], data: {}, histOpenForms: new Set(), divOpenForms: new Set(), agendaPasteOpenFor: new Set(), cardEditOpen: new Set(), chartPeriod: {}, chartSelectedPoint: {}, chartCustomRange: {}, sortMode: 'alpha', compareSelected: new Set(), dailyShowAll: false, weeklyShowAll: false, agendaEditingKey: null };
 
 // Persistance locale (sur cet appareil uniquement) de l'URL du backend et de
 // la liste de tickers suivis, pour ne pas avoir à tout ressaisir à chaque
@@ -720,7 +720,21 @@ function normalizeAccents(s){
 // proche occurrence future de ce jour/mois à partir d'aujourd'hui.
 function parseAgendaBoursoramaPaste(text, today){
   today = today || new Date();
-  const cleaned = String(text || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  let cleaned = String(text || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  // Ancrage sur le bloc « Événements à venir » quand il est identifiable
+  // (cas d'un collage de fiche complète, voir parseWeeklyFullPaste) : sans
+  // bornage, une date "jour + mois" trouvée ailleurs sur la page (actualités,
+  // communiqués, "Dernières transactions"...) serait à tort traitée comme un
+  // événement d'agenda — notamment quand la valeur n'a aucun véritable
+  // événement à venir, auquel cas tout ce qui suit sur la page devenait
+  // candidat. On borne donc le texte analysé entre l'en-tête « Événements à
+  // venir » et le début de la section suivante connue. Repli sur le texte
+  // entier si l'en-tête est absent (collage du seul bloc, usage historique
+  // du bouton "Analyser" individuel sur la fiche).
+  const startM = /[ée]v[eè]nements?\s+[aà]\s+venir/i.exec(cleaned);
+  if(startM) cleaned = cleaned.slice(startM.index + startM[0].length);
+  const endM = /derniers?\s+communiqu[ée]s|derni[èe]res?\s+transactions|derni[èe]res?\s+actualit[ée]s|donn[ée]es\s+historiques/i.exec(cleaned);
+  if(endM) cleaned = cleaned.slice(0, endM.index);
   const anchorRe = /(\d{1,2})\s*[\r\n]*\s*([a-zA-Zéûô]{3,10})\.?/g;
   const matches = [];
   let m;
@@ -881,6 +895,66 @@ function guessMarche(ticker){
     if(t.endsWith(suffix)) return TICKER_SUFFIX_MARCHE[suffix];
   }
   return 'NYSE / Nasdaq (probable)';
+}
+
+// Correction manuelle de la devise et/ou de la place de cotation pour une
+// valeur donnée — utile quand la détection automatique se trompe (ex. un
+// ticker saisi sans son suffixe de place boursière, comme "LVMH" ou "MC" au
+// lieu de "MC.PA" : la devise reste alors devinée par défaut en USD et le
+// marché en « NYSE / Nasdaq (probable) », à tort pour une valeur cotée à
+// Paris). Une valeur saisie ici prime TOUJOURS sur la détection automatique
+// (API ou devinée à partir du ticker) ; laissée vide, on retombe simplement
+// sur cette détection automatique. Stockage simple {ticker: 'EUR'} / {ticker:
+// 'Euronext Paris'}, même principe que loadNomManuel ci-dessus.
+function loadDeviseManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.deviseManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveDeviseManuel(ticker, value){
+  const store = loadDeviseManuel();
+  const v = String(value || '').trim().toUpperCase();
+  if(!v) delete store[ticker]; else store[ticker] = v;
+  try{ localStorage.setItem('stockAdvice.deviseManuel', JSON.stringify(store)); }catch(e){}
+}
+function loadMarcheManuel(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.marcheManuel') || '{}'); }catch(e){ return {}; }
+}
+function saveMarcheManuel(ticker, value){
+  const store = loadMarcheManuel();
+  const v = String(value || '').trim();
+  if(!v) delete store[ticker]; else store[ticker] = v;
+  try{ localStorage.setItem('stockAdvice.marcheManuel', JSON.stringify(store)); }catch(e){}
+}
+// Devise effectivement affichée pour une valeur : votre correction manuelle
+// en premier, puis la devise renvoyée par l'API (apiDevise, absente quand la
+// fiche est en échec), puis en dernier recours la déduction à partir du
+// suffixe du ticker (guessDevise) — jamais une absence totale d'affichage.
+function deviseEffective(ticker, apiDevise){
+  return loadDeviseManuel()[ticker] || apiDevise || guessDevise(ticker);
+}
+// Place de cotation effectivement affichée : votre correction manuelle en
+// premier, sinon la déduction à partir du suffixe du ticker (le backend ne
+// renvoie jamais ce champ, voir guessMarche ci-dessus).
+function marcheEffectif(ticker){
+  return loadMarcheManuel()[ticker] || guessMarche(ticker);
+}
+// Utilise deux boîtes de dialogue natives successives (même principe déjà
+// retenu pour renameTicker ci-dessus) plutôt qu'un champ dédié en permanence
+// sur chaque fiche : correction ponctuelle, pas une saisie fréquente.
+function corrigerDeviseMarche(ticker){
+  const curDevise = loadDeviseManuel()[ticker] || '';
+  const saisieDevise = window.prompt(
+    'Devise de cotation pour ' + ticker + ' (ex. EUR, USD, GBP, CHF... laissez vide pour revenir à la détection automatique) :',
+    curDevise
+  );
+  if(saisieDevise === null) return; // boîte annulée : on ne change rien du tout
+  saveDeviseManuel(ticker, saisieDevise);
+  const curMarche = loadMarcheManuel()[ticker] || '';
+  const saisieMarche = window.prompt(
+    'Place de cotation pour ' + ticker + ' (ex. Euronext Paris, NYSE... laissez vide pour revenir à la détection automatique) :',
+    curMarche
+  );
+  if(saisieMarche !== null) saveMarcheManuel(ticker, saisieMarche); // annulée : on garde la devise déjà enregistrée ci-dessus, sans toucher au marché
+  render();
 }
 
 // Sécurité des données : le ticker est utilisé tel quel à de très nombreux
@@ -1430,26 +1504,55 @@ function ticketAgendaEvents(ticker, raw){
   const earningsManuel = loadEarningsDateManuel()[ticker];
   const earningsDate = earningsManuel || (safeRaw ? safeRaw.prochaine_publication_resultats : null);
   if(earningsDate && daysBetweenIso(todayStr, earningsDate) >= 0){
-    events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: 'Publication de résultats', date: earningsDate, manuel: !!earningsManuel });
+    events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: 'Publication de résultats', date: earningsDate, manuel: !!earningsManuel,
+      source: earningsManuel ? 'earningsManuel' : null });
   }
 
   const dividendeManuel = loadDividendeDateManuel()[ticker];
   const divDate = dividendeManuel || (safeRaw && safeRaw.dividendes ? safeRaw.dividendes.prochaine_date_versement : null);
   if(divDate && daysBetweenIso(todayStr, divDate) >= 0){
-    events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate, manuel: !!dividendeManuel });
+    events.push({ ticker, apiNom, type: 'dividende', icon: '💶', label: 'Versement de dividende', date: divDate, manuel: !!dividendeManuel,
+      source: dividendeManuel ? 'dividendeManuel' : null });
   }
 
   // Calendrier complet collé depuis Boursorama (voir parseAgendaBoursoramaPaste) :
   // peut apporter plusieurs événements futurs d'un coup, chacun avec son
   // libellé d'origine (ex. "Résultats du 1er semestre", "Chiffre d'affaires
-  // 3ème trimestre") plutôt que le libellé générique ci-dessus.
-  (loadAgendaCalendrierManuel()[ticker] || []).forEach(ev => {
+  // 3ème trimestre") plutôt que le libellé générique ci-dessus. L'index dans
+  // le tableau enregistré est conservé (calIndex) pour permettre de corriger
+  // ou supprimer précisément CET événement depuis la vue Agenda (voir
+  // renderAgenda), sans toucher aux autres événements de la même valeur.
+  (loadAgendaCalendrierManuel()[ticker] || []).forEach((ev, i) => {
     if(ev && ev.date && daysBetweenIso(todayStr, ev.date) >= 0){
-      events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: ev.label, date: ev.date, manuel: true });
+      events.push({ ticker, apiNom, type: 'resultats', icon: '📣', label: ev.label, date: ev.date, manuel: true,
+        source: 'calendrier', calIndex: i });
     }
   });
 
   return events;
+}
+// Supprime UN événement précis de l'agenda d'une valeur, identifié par sa
+// source (voir ticketAgendaEvents) — utilisé par la vue Agenda globale pour
+// corriger une information erronée sans devoir rouvrir la fiche concernée.
+function removeAgendaEvent(ticker, source, calIndex){
+  if(source === 'earningsManuel') saveEarningsDateManuel(ticker, null);
+  else if(source === 'dividendeManuel') saveDividendeDateManuel(ticker, null);
+  else if(source === 'calendrier'){
+    const list = (loadAgendaCalendrierManuel()[ticker] || []).slice();
+    list.splice(calIndex, 1);
+    saveAgendaCalendrierManuel(ticker, list);
+  }
+}
+// Corrige UN événement précis de l'agenda d'une valeur (date, et libellé
+// quand la source en a un) — même principe que removeAgendaEvent ci-dessus.
+function editAgendaEvent(ticker, source, calIndex, newDate, newLabel){
+  if(source === 'earningsManuel') saveEarningsDateManuel(ticker, newDate);
+  else if(source === 'dividendeManuel') saveDividendeDateManuel(ticker, newDate);
+  else if(source === 'calendrier'){
+    const list = (loadAgendaCalendrierManuel()[ticker] || []).slice();
+    if(list[calIndex]) list[calIndex] = { date: newDate, label: newLabel };
+    saveAgendaCalendrierManuel(ticker, list);
+  }
 }
 
 // Saisie manuelle des dates d'agenda — disponible aussi bien sur une fiche
@@ -1579,6 +1682,14 @@ function collectAgendaEvents(){
   return events;
 }
 
+function agendaEventKey(ev){
+  return `${ev.ticker}|${ev.source || ''}|${ev.calIndex !== undefined ? ev.calIndex : ''}`;
+}
+// Vue Agenda globale (toutes valeurs confondues) : permet de corriger ou
+// supprimer directement une information erronée (libellé mal reconnu lors
+// d'un collage, date fausse...) sans devoir rouvrir la fiche concernée —
+// seuls les événements saisis/collés à la main (ev.source non vide) sont
+// corrigibles ici ; un événement issu de l'API n'a rien de local à éditer.
 function renderAgenda(){
   const el = document.getElementById('agendaContent');
   if(!el) return;
@@ -1590,13 +1701,39 @@ function renderAgenda(){
   const nomManuelMap = loadNomManuel();
   const rows = events.map(ev => {
     const nom = nomManuelMap[ev.ticker] || ev.apiNom || null;
+    const key = agendaEventKey(ev);
+    const editable = !!ev.source;
+    if(state.agendaEditingKey === key){
+      // Le libellé n'est modifiable que pour un événement du calendrier
+      // collé (champ libre) ; pour les dates "Prochains résultats"/"Prochain
+      // dividende" saisies isolément, seul le libellé générique existe et
+      // n'a pas de sens à changer — seule la date est alors proposée.
+      const labelField = ev.source === 'calendrier'
+        ? `<input type="text" class="agendaEditLabelInput" value="${escapeHtml(ev.label)}" style="width:100%; margin-bottom:4px;">`
+        : `<div style="font-size:.78rem; color:var(--ink-muted); margin-bottom:4px;">${ev.icon} ${escapeHtml(ev.label)}</div>`;
+      return `<tr data-agenda-edit-row="${escapeHtml(key)}">
+        <td colspan="3" style="padding:8px;">
+          <div style="font-weight:600; font-size:.8rem; margin-bottom:4px;">${nom ? escapeHtml(nom) : ev.ticker} — modifier cet événement :</div>
+          ${labelField}
+          <input type="date" class="agendaEditDateInput" value="${ev.date}" style="margin-bottom:6px;">
+          <div>
+            <button data-action="agenda-edit-save" data-key="${escapeHtml(key)}" data-ticker="${ev.ticker}" data-source="${ev.source}" data-calindex="${ev.calIndex !== undefined ? ev.calIndex : ''}">Enregistrer</button>
+            <button class="hist-reset" data-action="agenda-edit-cancel" style="margin-left:6px;">Annuler</button>
+          </div>
+        </td>
+      </tr>`;
+    }
     return `<tr>
       <td>${frDate(ev.date)}<br><span style="font-size:.72rem; color:var(--ink-muted);">${whenLabel(ev.date)}</span></td>
       <td>${ev.icon} ${ev.label}${ev.manuel ? ' <span style="font-size:.72rem; color:var(--ink-muted);">(saisi)</span>' : ''}</td>
       <td><b>${nom ? escapeHtml(nom) : ev.ticker}</b>${nom ? '<br><span style="color:var(--ink-muted);">' + ev.ticker + '</span>' : ''}</td>
+      <td style="white-space:nowrap;">${editable ? `
+        <button class="hist-reset" data-action="agenda-edit-start" data-key="${escapeHtml(key)}" title="Corriger cet événement">✎</button>
+        <button class="hist-reset" data-action="agenda-remove" data-ticker="${ev.ticker}" data-source="${ev.source}" data-calindex="${ev.calIndex !== undefined ? ev.calIndex : ''}" title="Supprimer cet événement">✕</button>
+      ` : ''}</td>
     </tr>`;
   }).join('');
-  el.innerHTML = `<div style="overflow-x:auto;"><table class="hist-table"><thead><tr><th>Date</th><th>Événement</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  el.innerHTML = `<div style="overflow-x:auto;"><table class="hist-table"><thead><tr><th>Date</th><th>Événement</th><th>Valeur</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // Échappement HTML — Sécurité des données : tout ce qui est affiché dans
@@ -2466,7 +2603,16 @@ function readWeeklyConsensus(ticker){
   return { value, date };
 }
 
-function saveWeeklyBlock(ticker){
+// N'enregistre QUE les séances actuellement saisies dans le bloc hebdomadaire
+// d'une valeur (sans toucher à l'objectif/au consensus) — factorisé hors de
+// saveWeeklyBlock ci-dessous pour pouvoir être appelé seul par le collage
+// unique « Coller toute la fiche » (voir parseWeeklyFullPaste) lors de la
+// création d'une nouvelle valeur, à un moment où les champs objectif/
+// consensus du même bloc n'ont pas encore été remplis par ce collage —
+// les y inclure par erreur aurait pu y enregistrer une valeur résiduelle
+// non voulue. saveWeeklyBlock, lui, continue d'enregistrer les trois à la
+// fois pour le bouton "Enregistrer cette semaine", comportement inchangé.
+function saveWeeklySeancesOnly(ticker){
   const cols = readWeeklyBlock(ticker);
   const notes = [];
   let count = 0;
@@ -2486,6 +2632,11 @@ function saveWeeklyBlock(ticker){
     }
     notes.push(note);
   });
+  return { count, notes };
+}
+
+function saveWeeklyBlock(ticker){
+  const { count, notes } = saveWeeklySeancesOnly(ticker);
   // L'objectif à 3 mois est enregistré indépendamment des séances
   // ci-dessus (même logique que dans le panneau quotidien) : une semaine
   // sans séance complète (jour férié, données manquantes) ne doit pas
@@ -2507,6 +2658,28 @@ function saveWeeklyBlock(ticker){
   return { count, notes };
 }
 
+// Enregistre l'historique par périodes actuellement saisi dans le panneau
+// hebdomadaire pour une valeur (voir readSeedForm) — factorisé pour être
+// appelable aussi bien depuis le bouton « Enregistrer l'historique de
+// référence » que depuis le collage unique « Coller toute la fiche » lors
+// de la création d'une nouvelle valeur (voir parseWeeklyFullPaste, qui
+// l'appelle directement quand rien n'est encore enregistré pour la valeur).
+// Renvoie la date du seed enregistré, ou null si rien n'était renseigné.
+function saveWeeklyHistSeed(ticker){
+  const periods = readSeedForm(ticker, 'weeklyHistSeedInput');
+  const hasAnyValue = HIST_PERIODS.some(p => {
+    const v = periods[p.key] || {};
+    return v.var_pct !== undefined || v.haut !== undefined || v.bas !== undefined;
+  });
+  if(!hasAnyValue) return null;
+  const store = loadHistoriqueStore();
+  if(!store[ticker]) store[ticker] = { seed: null, seances: [] };
+  const seedDate = lastSeanceDate(ticker) || isoDate(new Date());
+  store[ticker].seed = { date: seedDate, periods };
+  saveHistoriqueStore(store);
+  return seedDate;
+}
+
 // Collage "toute la fiche" (panneau hebdomadaire) : une seule case où coller
 // une large portion de la fiche Boursorama, qui remplit automatiquement
 // tout ce qu'elle reconnaît parmi l'historique 5 jours, l'historique par
@@ -2521,17 +2694,38 @@ function saveWeeklyBlock(ticker){
 // ce qui est nouveau ou a changé (c'est la demande d'origine).
 function parseWeeklyFullPaste(ticker, text){
   const notes = [];
+  // Valeur tout juste ajoutée, sans aucun historique déjà enregistré (ni
+  // séance, ni historique par périodes) : rien à protéger d'un écrasement
+  // accidentel, donc l'historique collé — qui fait partie des données
+  // collées au même titre que l'agenda ou les dividendes — est enregistré
+  // directement, sans étape de relecture manuelle. Dès qu'un historique
+  // existe déjà pour cette valeur (même partiel), on repasse au
+  // comportement habituel : remplir les champs et laisser la main pour
+  // vérifier avant d'enregistrer, afin de ne jamais écraser une donnée déjà
+  // vérifiée/corrigée par vous sans confirmation.
+  const existingHist = loadHistoriqueStore()[ticker];
+  const isNewTicker = !existingHist || (!existingHist.seed && (!existingHist.seances || !existingHist.seances.length));
   const seances = parseWeeklyHistoriquePaste(text);
   if(seances){
     fillWeeklyBlock(ticker, seances);
-    notes.push('📈 Historique 5 jours reconnu — champs remplis ci-dessous (à vérifier puis « Enregistrer cette semaine »).');
+    if(isNewTicker){
+      const { count } = saveWeeklySeancesOnly(ticker);
+      notes.push(`📈 Historique 5 jours reconnu et enregistré directement (${count} séance(s) — nouvelle valeur, rien à écraser).`);
+    } else {
+      notes.push('📈 Historique 5 jours reconnu — champs remplis ci-dessous (à vérifier puis « Enregistrer cette semaine »).');
+    }
   }
   const periods = parseBoursoramaPaste(text);
   const periodCount = Object.keys(periods).length;
   if(periodCount){
     fillSeedInputs(ticker, periods, 'weeklyHistSeedInput');
     renderSeedPreview(ticker, 'weeklyHistPreview', 'weeklyHistSeedInput');
-    notes.push(`📊 Historique par périodes reconnu (${periodCount} période${periodCount>1?'s':''}) — à vérifier dans « Historique de référence » ci-dessous puis enregistrer.`);
+    if(isNewTicker){
+      saveWeeklyHistSeed(ticker);
+      notes.push(`📊 Historique par périodes reconnu et enregistré directement (${periodCount} période${periodCount>1?'s':''} — nouvelle valeur, rien à écraser).`);
+    } else {
+      notes.push(`📊 Historique par périodes reconnu (${periodCount} période${periodCount>1?'s':''}) — à vérifier dans « Historique de référence » ci-dessous puis enregistrer.`);
+    }
   }
   const oc = parseObjectifConsensusBoursoramaPaste(text);
   if(oc){
@@ -3043,7 +3237,7 @@ function cardContent(ticker, d, alertMsgs){
     // et historique restent tous accessibles, exactement comme sur une fiche
     // qui a chargé normalement. Le bouton « Réessayer » continue de retenter
     // l'API en tâche de fond, sans effacer ce que vous avez saisi.
-    const deviseGuess = currencySymbol(guessDevise(ticker));
+    const deviseGuess = currencySymbol(deviseEffective(ticker, null));
     const nomManuel = escapeHtml(loadNomManuel()[ticker]);
     const manualSeance = getManualLatestSeance(ticker);
     const cours = manualSeance ? manualSeance.clo : null;
@@ -3063,11 +3257,11 @@ function cardContent(ticker, d, alertMsgs){
     const objectifLine = hasObjManuel
       ? `<div class="kv"><span>Objectif 3 mois (saisi${objDate0 ? ' au ' + frDate(objDate0) : ''}) : <b>${fmtPrix(objManuel)} ${deviseGuess}</b>${potentielPct!==null ? ` (${pctSpan(potentielPct)})` : ''}</span></div>`
       : '';
-    const marcheGuess0 = guessMarche(ticker);
+    const marcheGuess0 = marcheEffectif(ticker);
     return `<div class="card${state.cardEditOpen.has(ticker) ? ' edit-open' : ''}" data-ticker="${ticker}">
       <div class="head"><div>
           <div class="title">${nomManuel || ticker}</div>
-          <div class="subtitle">${nomManuel ? ticker + ' · ' : ''}<span title="Marché déduit automatiquement du ticker — à vérifier, le backend ne le fournit pas">${marcheGuess0}</span></div>
+          <div class="subtitle">${nomManuel ? ticker + ' · ' : ''}<span title="${loadMarcheManuel()[ticker] ? 'Place de cotation corrigée par vous' : 'Marché déduit automatiquement du ticker — à vérifier, le backend ne le fournit pas'}">${marcheGuess0}</span> <a href="#" onclick="event.preventDefault(); corrigerDeviseMarche('${ticker}');" title="Corriger la devise/place de cotation" style="text-decoration:none;">✏️</a></div>
         </div>
         <div style="display:flex; gap:6px; align-items:center;">
           <label class="remove" style="cursor:pointer;" title="Sélectionner pour comparer / analyser"><input type="checkbox" class="compareCheckbox" data-ticker="${ticker}" style="vertical-align:middle;"></label>
@@ -3105,17 +3299,19 @@ function cardContent(ticker, d, alertMsgs){
   // c'est donc FMP qui est indisponible, pas Yahoo (le texte précédent disait
   // l'inverse, corrigé ici).
   const bascule = d.source_bascule_api ? `<div class="alertbox" style="background:var(--warn-soft);color:var(--warn)">Bascule d'API : source principale (FMP) indisponible, Yahoo Finance utilisé en secours pour le cours.</div>` : '';
-  const devise = currencySymbol(d.devise);
+  const devise = currencySymbol(deviseEffective(ticker, d.devise));
   const nomManuel = escapeHtml(loadNomManuel()[ticker]);
   const costBasis = loadCostBasis()[ticker];
   // Secteur : renvoyé par le backend (profil entreprise FMP/Yahoo), affiché
   // tel quel quand disponible — pas de saisie manuelle, c'est de la donnée
   // récupérée automatiquement. Marché : deviné côté widget (voir guessMarche
-  // ci-dessus), le backend ne renvoyant pas ce champ ; toujours affiché, en
-  // mentionnant que c'est une déduction. escapeHtml() par précaution (texte
-  // libre renvoyé par la source de données externe FMP/Yahoo).
+  // ci-dessus) sauf correction manuelle (voir marcheEffectif), le backend ne
+  // renvoyant pas ce champ ; toujours affiché, en mentionnant que c'est une
+  // déduction tant qu'il n'y a pas eu de correction. escapeHtml() par
+  // précaution (texte libre renvoyé par la source de données externe
+  // FMP/Yahoo).
   const secteurAffiche = d.secteur ? escapeHtml(d.secteur) : null;
-  const marcheAffiche = guessMarche(ticker);
+  const marcheAffiche = marcheEffectif(ticker);
   // Le cours affiché privilégie TOUJOURS votre dernière séance saisie
   // manuellement quand elle existe (voir la discussion sur la fiabilité des
   // sources gratuites, Yahoo/Stooq pouvant afficher un cours vieux de
@@ -3191,7 +3387,7 @@ function cardContent(ticker, d, alertMsgs){
   }
   return `<div class="card${state.cardEditOpen.has(ticker) ? ' edit-open' : ''}" data-ticker="${ticker}">
     <div class="head">
-      <div><div class="title">${nomManuel || escapeHtml(d.nom) || ticker}</div><div class="subtitle">${ticker}${secteurAffiche ? ' · ' + secteurAffiche : ''} · <span title="Marché déduit automatiquement du ticker — à vérifier, le backend ne le fournit pas">${marcheAffiche}</span></div></div>
+      <div><div class="title">${nomManuel || escapeHtml(d.nom) || ticker}</div><div class="subtitle">${ticker}${secteurAffiche ? ' · ' + secteurAffiche : ''} · <span title="${loadMarcheManuel()[ticker] ? 'Place de cotation corrigée par vous' : 'Marché déduit automatiquement du ticker — à vérifier, le backend ne le fournit pas'}">${marcheAffiche}</span> <a href="#" onclick="event.preventDefault(); corrigerDeviseMarche('${ticker}');" title="Corriger la devise/place de cotation" style="text-decoration:none;">✏️</a></div></div>
       <div style="display:flex; gap:6px; align-items:center;">
         <label class="remove" style="cursor:pointer;" title="Sélectionner pour comparer / analyser"><input type="checkbox" class="compareCheckbox" data-ticker="${ticker}" style="vertical-align:middle;"></label>
         <button class="remove" data-action="toggle-card-edit" data-ticker="${ticker}" title="Afficher/masquer les champs de saisie">⚙️</button>
@@ -3517,7 +3713,7 @@ function buildTickerVerificationText(ticker){
   const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
   const nomManuel = loadNomManuel()[ticker];
   const nom = nomManuel || (raw && raw.nom) || '';
-  const devise = raw && raw.devise ? raw.devise : guessDevise(ticker);
+  const devise = deviseEffective(ticker, raw && raw.devise);
   const sourceUrl = loadSourceUrls()[ticker] || '';
   const manualSeance = getManualLatestSeance(ticker);
   const peaManuel = loadPeaManuel()[ticker] === true;
@@ -3625,7 +3821,7 @@ function buildPortfolioContext(question){
     const consDate = loadConsensusManuelDate()[t];
     const costBasis = loadCostBasis()[t];
     const nom = raw && raw.nom ? raw.nom : '';
-    const deviseTxt = raw && raw.devise ? raw.devise : guessDevise(t);
+    const deviseTxt = deviseEffective(t, raw && raw.devise);
     const cours = manualSeance ? manualSeance.clo : (raw && raw.seance ? raw.seance.close : null);
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
     const objectifRetenu = hasObjManuel ? objManuel : (raw && raw.objectif_3_mois ? raw.objectif_3_mois.retenu : null);
@@ -3706,10 +3902,10 @@ function buildCompareTableHtml(tickers){
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
     const manualSeance = getManualLatestSeance(t);
     const nom = escapeHtml(loadNomManuel()[t] || (raw && raw.nom) || t);
-    const deviseTxt = raw ? currencySymbol(raw.devise) : currencySymbol(guessDevise(t));
+    const deviseTxt = currencySymbol(deviseEffective(t, raw && raw.devise));
     const cours = manualSeance ? manualSeance.clo : (raw && raw.seance ? raw.seance.close : null);
     const secteurTxt = (raw && raw.secteur) ? escapeHtml(raw.secteur) : '—';
-    const marcheTxt = guessMarche(t);
+    const marcheTxt = marcheEffectif(t);
     const metrics = getSortMetrics(t);
     const consManuel = loadConsensusManuel()[t];
     const tier = consensusTier(consManuel);
@@ -3757,10 +3953,10 @@ function buildAnalysePrompt(tickers){
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
     const manualSeance = getManualLatestSeance(t);
     const nom = loadNomManuel()[t] || (raw && raw.nom) || '';
-    const deviseTxt = raw && raw.devise ? raw.devise : guessDevise(t);
+    const deviseTxt = deviseEffective(t, raw && raw.devise);
     const cours = manualSeance ? manualSeance.clo : (raw && raw.seance ? raw.seance.close : null);
     const secteurTxt = raw && raw.secteur ? raw.secteur : null;
-    const marcheTxt = guessMarche(t);
+    const marcheTxt = marcheEffectif(t);
     const consManuel = loadConsensusManuel()[t];
     const tier = consensusTier(consManuel);
     const metrics = getSortMetrics(t);
@@ -3929,6 +4125,45 @@ document.getElementById('agendaToggle').addEventListener('click', e => {
   e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
   if(!panel.hidden) renderAgenda();
 });
+// Correction/suppression d'un événement directement depuis la vue Agenda
+// globale (voir renderAgenda) — pratique pour nettoyer une information
+// erronée (ex. agenda mal reconnu lors d'un collage) sans rouvrir la fiche
+// de la valeur concernée.
+document.getElementById('agendaPanel').addEventListener('click', e => {
+  const startBtn = e.target.closest('[data-action="agenda-edit-start"]');
+  if(startBtn){
+    state.agendaEditingKey = startBtn.dataset.key;
+    renderAgenda();
+    return;
+  }
+  const cancelBtn = e.target.closest('[data-action="agenda-edit-cancel"]');
+  if(cancelBtn){
+    state.agendaEditingKey = null;
+    renderAgenda();
+    return;
+  }
+  const saveBtn = e.target.closest('[data-action="agenda-edit-save"]');
+  if(saveBtn){
+    const row = saveBtn.closest('[data-agenda-edit-row]');
+    const dateEl = row.querySelector('.agendaEditDateInput');
+    const labelEl = row.querySelector('.agendaEditLabelInput');
+    const newDate = dateEl ? dateEl.value : '';
+    if(!newDate){ alert('Merci de renseigner une date.'); return; }
+    const calIndex = saveBtn.dataset.calindex !== '' ? Number(saveBtn.dataset.calindex) : undefined;
+    editAgendaEvent(saveBtn.dataset.ticker, saveBtn.dataset.source, calIndex, newDate, labelEl ? labelEl.value.trim() : undefined);
+    state.agendaEditingKey = null;
+    render();
+    return;
+  }
+  const removeBtn = e.target.closest('[data-action="agenda-remove"]');
+  if(removeBtn){
+    if(!confirm('Supprimer cet événement de l\'agenda ?')) return;
+    const calIndex = removeBtn.dataset.calindex !== '' ? Number(removeBtn.dataset.calindex) : undefined;
+    removeAgendaEvent(removeBtn.dataset.ticker, removeBtn.dataset.source, calIndex);
+    render();
+    return;
+  }
+});
 
 document.getElementById('archivesToggle').addEventListener('click', e => {
   const panel = document.getElementById('archivesPanel');
@@ -4048,21 +4283,12 @@ document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
   const saveWeeklyHistBtn = e.target.closest('[data-action="save-weekly-hist"]');
   if(saveWeeklyHistBtn){
     const t = saveWeeklyHistBtn.dataset.ticker;
-    const periods = readSeedForm(t, 'weeklyHistSeedInput');
     const resultEl = document.querySelector(`.weeklyHistResult[data-ticker="${t}"]`);
-    const hasAnyValue = HIST_PERIODS.some(p => {
-      const v = periods[p.key] || {};
-      return v.var_pct !== undefined || v.haut !== undefined || v.bas !== undefined;
-    });
-    if(!hasAnyValue){
+    const seedDate = saveWeeklyHistSeed(t);
+    if(seedDate === null){
       if(resultEl) resultEl.textContent = 'Rien à enregistrer — collez le tableau ou renseignez au moins une période.';
       return;
     }
-    const store = loadHistoriqueStore();
-    if(!store[t]) store[t] = { seed: null, seances: [] };
-    const seedDate = lastSeanceDate(t) || isoDate(new Date());
-    store[t].seed = { date: seedDate, periods };
-    saveHistoriqueStore(store);
     if(resultEl) resultEl.textContent = `✅ Historique de référence enregistré (daté du ${frDate(seedDate)}).`;
     render();
     return;
