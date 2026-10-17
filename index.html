@@ -291,6 +291,8 @@
             <th title="Plus bas en séance">+Bas</th>
             <th title="Variation depuis le 1er janvier">Var/1Janv</th>
             <th title="Volume échangé, converti automatiquement en milliers">Vol.</th>
+            <th title="Objectif de cours à 3 mois (facultatif, indépendant des cours ci-dessus)">Objectif 3 mois</th>
+            <th title="Date de l'objectif telle qu'affichée sur la fiche source — pré-remplie avec la date du jour, à corriger si besoin">Date objectif</th>
           </tr></thead>
           <tbody id="dailyUpdateBody"></tbody>
         </table>
@@ -1853,6 +1855,7 @@ function readDailyRow(ticker){
     const el = document.querySelector(`.${cls}[data-ticker="${ticker}"]`);
     return (el && el.value.trim() !== '') ? Number(el.value) : NaN;
   };
+  const objectifDateEl = document.querySelector(`.dailyObjectifDateInput[data-ticker="${ticker}"]`);
   return {
     dernier: get('dailyDernierInput'),
     varJour: get('dailyVarInput'),
@@ -1861,6 +1864,8 @@ function readDailyRow(ticker){
     bas: get('dailyBasInput'),
     varYtd: get('dailyYtdInput'),
     vol: get('dailyVolInput'),
+    objectif: get('dailyObjectifInput'),
+    objectifDate: objectifDateEl ? objectifDateEl.value : '',
   };
 }
 
@@ -1883,6 +1888,18 @@ function lastBusinessDayStr(){
   const dow = d.getDay();
   const delta = dow === 0 ? 2 : (dow === 6 ? 1 : 0);
   d.setDate(d.getDate() - delta);
+  return isoDate(d);
+}
+// Vendredi de la semaine en cours (lun-dim), à la date du jour — pour
+// pré-remplir par défaut la date de l'objectif de cours (3 mois) dans le
+// panneau de mise à jour hebdomadaire : du lundi au jeudi, le vendredi à
+// venir (fin de la semaine en cours) ; le vendredi lui-même, inchangé ; le
+// week-end, celui qui vient de s'écouler (toujours dans la MÊME semaine
+// ISO lun-dim, jamais celui de la semaine suivante).
+function fridayOfThisWeek(){
+  const d = new Date();
+  const isoDow = d.getDay() === 0 ? 7 : d.getDay(); // 1=lundi ... 7=dimanche
+  d.setDate(d.getDate() - (isoDow - 5));
   return isoDate(d);
 }
 function daysSinceDate(dateStr){
@@ -1911,7 +1928,7 @@ function isWeeklyUpToDate(ticker){
 // voir le listener sur l'événement 'input', plus bas).
 function dailyUpdateRows(){
   if(!state.tickers.length){
-    return `<tr><td colspan="9" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
+    return `<tr><td colspan="11" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
   }
   // Toujours par ordre alphabétique (ticker), indépendamment du tri choisi
   // pour la grille principale (state.sortMode) : ce panneau sert à parcourir
@@ -1926,8 +1943,9 @@ function dailyUpdateRows(){
     hint.textContent = hidden > 0 ? `${hidden} valeur${hidden>1?'s':''} déjà à jour masquée${hidden>1?'s':''}.` : '';
   }
   if(!list.length){
-    return `<tr><td colspan="9" style="color:var(--ink-muted); text-align:center;">Toutes les valeurs sont déjà à jour aujourd'hui 👍</td></tr>`;
+    return `<tr><td colspan="11" style="color:var(--ink-muted); text-align:center;">Toutes les valeurs sont déjà à jour aujourd'hui 👍</td></tr>`;
   }
+  const todayStr = isoDate(new Date());
   return list.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
@@ -1942,6 +1960,8 @@ function dailyUpdateRows(){
       <td><input type="number" step="0.0001" class="dailyBasInput" data-ticker="${t}" style="width:80px;"></td>
       <td><input type="number" step="0.01" class="dailyYtdInput" data-ticker="${t}" style="width:70px;"></td>
       <td><input type="number" step="1" min="0" class="dailyVolInput" data-ticker="${t}" style="width:80px;" title="Volume converti en milliers (K)"></td>
+      <td><input type="number" step="0.0001" class="dailyObjectifInput" data-ticker="${t}" placeholder="ex. 18.50" style="width:84px;" title="Objectif de cours à 3 mois — facultatif, enregistré indépendamment des cours de cette ligne"></td>
+      <td><input type="date" class="dailyObjectifDateInput" data-ticker="${t}" value="${todayStr}" style="width:132px;" title="Date de l'objectif telle qu'affichée sur la fiche source — pré-remplie avec la date du jour, à corriger si besoin"></td>
     </tr>`;
   }).join('');
 }
@@ -1961,36 +1981,49 @@ function refreshDailyUpdateTableIfOpen(){
 // pour un contrôle de cohérence a posteriori), et met à jour la variation
 // "depuis le 1er janvier" du seed d'historique quand elle est renseignée.
 // Une ligne sans Dernier/Ouv./+Haut/+Bas complets est simplement ignorée
-// (valeur non encore collée ce jour-là).
+// pour la séance (valeur non encore collée ce jour-là) — mais l'objectif de
+// cours à 3 mois, lui, est volontairement indépendant : une valeur saisie
+// dans cette colonne est enregistrée même sans séance complète sur la même
+// ligne (et inversement), comme sur la fiche individuelle où ce sont deux
+// champs sans lien entre eux.
 function saveDailyUpdates(){
   const todayStr = isoDate(new Date());
   const notes = [];
   let count = 0;
   state.tickers.forEach(t => {
     const row = readDailyRow(t);
-    if([row.dernier, row.ouv, row.haut, row.bas].some(v => isNaN(v))) return;
-    const seance = { date: todayStr, ouv: row.ouv, haut: row.haut, bas: row.bas, clo: row.dernier };
-    if(!isNaN(row.vol)) seance.volume = row.vol;
-    upsertSeance(t, seance);
-    if(!isNaN(row.varYtd)){
-      const store = loadHistoriqueStore();
-      if(!store[t]) store[t] = { seed: null, seances: store[t] ? store[t].seances : [] };
-      if(!store[t].seed) store[t].seed = { date: todayStr, periods: {} };
-      if(!store[t].seed.periods) store[t].seed.periods = {};
-      if(!store[t].seed.periods.ytd) store[t].seed.periods.ytd = {};
-      store[t].seed.periods.ytd.var_pct = row.varYtd;
-      saveHistoriqueStore(store);
-    }
-    count++;
-    const savedEntry = loadHistoriqueStore()[t];
-    const savedSeance = savedEntry && (savedEntry.seances || []).find(s => s.date === todayStr);
-    let note = `${t} : enregistré`;
-    if(!isNaN(row.varJour) && savedSeance && savedSeance.var_pct !== undefined && savedSeance.var_pct !== null){
-      if(Math.abs(savedSeance.var_pct - row.varJour) > 0.5){
-        note += ` — ⚠ écart Var. Boursorama ${row.varJour>0?'+':''}${fmt(row.varJour,2)}% vs calculé ${savedSeance.var_pct>0?'+':''}${fmt(savedSeance.var_pct,2)}% (vérifiez la clôture précédente ou une séance manquante)`;
+    let noteParts = [];
+    const seanceComplete = ![row.dernier, row.ouv, row.haut, row.bas].some(v => isNaN(v));
+    if(seanceComplete){
+      const seance = { date: todayStr, ouv: row.ouv, haut: row.haut, bas: row.bas, clo: row.dernier };
+      if(!isNaN(row.vol)) seance.volume = row.vol;
+      upsertSeance(t, seance);
+      if(!isNaN(row.varYtd)){
+        const store = loadHistoriqueStore();
+        if(!store[t]) store[t] = { seed: null, seances: store[t] ? store[t].seances : [] };
+        if(!store[t].seed) store[t].seed = { date: todayStr, periods: {} };
+        if(!store[t].seed.periods) store[t].seed.periods = {};
+        if(!store[t].seed.periods.ytd) store[t].seed.periods.ytd = {};
+        store[t].seed.periods.ytd.var_pct = row.varYtd;
+        saveHistoriqueStore(store);
+      }
+      const savedEntry = loadHistoriqueStore()[t];
+      const savedSeance = savedEntry && (savedEntry.seances || []).find(s => s.date === todayStr);
+      noteParts.push('séance enregistrée');
+      if(!isNaN(row.varJour) && savedSeance && savedSeance.var_pct !== undefined && savedSeance.var_pct !== null){
+        if(Math.abs(savedSeance.var_pct - row.varJour) > 0.5){
+          noteParts.push(`⚠ écart Var. Boursorama ${row.varJour>0?'+':''}${fmt(row.varJour,2)}% vs calculé ${savedSeance.var_pct>0?'+':''}${fmt(savedSeance.var_pct,2)}% (vérifiez la clôture précédente ou une séance manquante)`);
+        }
       }
     }
-    notes.push(note);
+    if(!isNaN(row.objectif)){
+      saveObjectifManuel(t, row.objectif);
+      saveObjectifManuelDate(t, row.objectifDate || todayStr);
+      noteParts.push(`objectif ${fmtPrix(row.objectif)} (au ${frDate(row.objectifDate || todayStr)})`);
+    }
+    if(!noteParts.length) return;
+    count++;
+    notes.push(`${t} : ${noteParts.join(' — ')}`);
   });
   return { count, notes, todayStr };
 }
@@ -2087,6 +2120,7 @@ function weeklyUpdateBlocks(){
     return `<p class="hist-hint">Toutes les valeurs sont déjà à jour 👍</p>`;
   }
   const histStore = loadHistoriqueStore();
+  const fridayStr = fridayOfThisWeek();
   return list.map(t => {
     const entry = state.data[t];
     const raw = (entry && entry.data && !entry.data.error) ? entry.data : null;
@@ -2127,6 +2161,11 @@ function weeklyUpdateBlocks(){
             <tr><td>Vol. <span style="color:var(--ink-muted); font-weight:400;">(K)</span></td>${[0,1,2,3,4].map(i => cell('weeklyVolInput','1',i)).join('')}</tr>
           </tbody>
         </table>
+      </div>
+      <div class="hist-source edit-field" style="margin-top:8px;">
+        <span style="min-width:120px; font-size:.82rem;">Objectif 3 mois :</span>
+        <input type="number" step="0.0001" class="weeklyObjectifInput" data-ticker="${t}" placeholder="ex. 18.50" style="width:90px;" title="Objectif de cours à 3 mois — facultatif, enregistré indépendamment des séances ci-dessus">
+        <input type="date" class="weeklyObjectifDateInput" data-ticker="${t}" value="${fridayStr}" style="width:132px;" title="Date de l'objectif telle qu'affichée sur la fiche source — pré-remplie avec le vendredi de la semaine en cours, à corriger si besoin">
       </div>
       <button class="weeklySaveBtn" data-action="save-weekly" data-ticker="${t}" type="button" style="margin-top:6px;">Enregistrer cette semaine</button>
       <div class="weeklyResult hist-hint" data-ticker="${t}" style="margin-top:4px;"></div>
@@ -2205,6 +2244,14 @@ function readWeeklyBlock(ticker){
 // utilisée seulement pour un contrôle de cohérence a posteriori). Une
 // colonne sans date ou sans Ouv./+Haut/+Bas/Dernier complets est ignorée
 // (jour manquant, ex. jour férié).
+function readWeeklyObjectif(ticker){
+  const valEl = document.querySelector(`.weeklyObjectifInput[data-ticker="${ticker}"]`);
+  const dateEl = document.querySelector(`.weeklyObjectifDateInput[data-ticker="${ticker}"]`);
+  const value = (valEl && valEl.value.trim() !== '') ? Number(valEl.value) : NaN;
+  const date = dateEl ? dateEl.value : '';
+  return { value, date };
+}
+
 function saveWeeklyBlock(ticker){
   const cols = readWeeklyBlock(ticker);
   const notes = [];
@@ -2225,6 +2272,16 @@ function saveWeeklyBlock(ticker){
     }
     notes.push(note);
   });
+  // L'objectif à 3 mois est enregistré indépendamment des séances
+  // ci-dessus (même logique que dans le panneau quotidien) : une semaine
+  // sans séance complète (jour férié, données manquantes) ne doit pas
+  // empêcher de simplement mettre à jour l'objectif.
+  const obj = readWeeklyObjectif(ticker);
+  if(!isNaN(obj.value)){
+    saveObjectifManuel(ticker, obj.value);
+    saveObjectifManuelDate(ticker, obj.date || fridayOfThisWeek());
+    notes.push(`Objectif : ${fmtPrix(obj.value)} (au ${frDate(obj.date || fridayOfThisWeek())})`);
+  }
   return { count, notes };
 }
 
@@ -3618,7 +3675,7 @@ document.getElementById('dailyUpdateSaveBtn').addEventListener('click', () => {
   const { count, notes, todayStr } = saveDailyUpdates();
   document.getElementById('dailyUpdateResult').textContent = count
     ? `${count} valeur(s) mise(s) à jour pour le ${frDate(todayStr)}. ${notes.join(' ; ')}`
-    : 'Aucune ligne complète à enregistrer (Dernier, Ouv., +Haut et +Bas sont requis pour chaque valeur à mettre à jour).';
+    : 'Aucune ligne complète à enregistrer (Dernier, Ouv., +Haut et +Bas sont requis pour la séance ; l\'objectif de cours, lui, peut être enregistré seul).';
   render();
   renderDailyUpdateTable();
 });
@@ -3653,11 +3710,11 @@ document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
     const { count, notes } = saveWeeklyBlock(t);
     const resultEl = document.querySelector(`.weeklyResult[data-ticker="${t}"]`);
     if(resultEl){
-      resultEl.textContent = count
-        ? `✅ ${count} séance(s) enregistrée(s). ${notes.join(' ; ')}`
-        : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer).";
+      resultEl.textContent = notes.length
+        ? `✅ ${count ? count + ' séance(s) enregistrée(s). ' : ''}${notes.join(' ; ')}`
+        : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer ; l'objectif de cours, lui, peut être enregistré seul).";
     }
-    if(count) render();
+    render();
     return;
   }
   // Repli/dépli de l'historique de référence d'UNE valeur de ce panneau :
