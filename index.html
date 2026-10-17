@@ -293,6 +293,8 @@
             <th title="Volume échangé, converti automatiquement en milliers">Vol.</th>
             <th title="Objectif de cours à 3 mois (facultatif, indépendant des cours ci-dessus)">Objectif 3 mois</th>
             <th title="Date de l'objectif telle qu'affichée sur la fiche source — pré-remplie avec la date du jour, à corriger si besoin">Date objectif</th>
+            <th title="Consensus des analystes, note de 1 (Acheter) à 5 (Vendre) (facultatif, indépendant des cours ci-dessus)">Consensus</th>
+            <th title="Date du consensus telle qu'affichée sur la fiche source — pré-remplie avec la date du jour, à corriger si besoin">Date consensus</th>
           </tr></thead>
           <tbody id="dailyUpdateBody"></tbody>
         </table>
@@ -562,6 +564,48 @@ function removeObjectifManuelHistorique(ticker, index){
 // sa date juste après. Si la date est modifiée AVANT la valeur, l'ancienne
 // date aura déjà été écrasée au moment où la valeur change, et l'entrée
 // archivée portera alors la nouvelle date plutôt que l'ancienne.
+// Valeur de l'objectif/consensus juste AVANT le dernier enregistrement —
+// distincte de l'historique daté ci-dessus (qui peut être réordonné ou
+// corrigé a posteriori) : sert uniquement à savoir si la valeur vient d'être
+// révisée à la hausse, à la baisse, ou reste stable (flèche affichée sur la
+// fiche). Mise à jour à CHAQUE enregistrement où une ancienne valeur
+// existait déjà — y compris quand la nouvelle valeur saisie est identique à
+// l'ancienne (ressaisie de confirmation lors d'une mise à jour groupée) :
+// c'est justement ce cas-là qui doit afficher "stable", pas seulement une
+// vraie variation. Reste vide tant qu'aucune valeur n'a encore été
+// enregistrée une première fois (rien à comparer).
+function loadObjectifManuelPrevious(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.objectifManuelPrevious') || '{}'); }catch(e){ return {}; }
+}
+function saveObjectifManuelPrevious(ticker, value){
+  const store = loadObjectifManuelPrevious();
+  store[ticker] = value;
+  try{ localStorage.setItem('stockAdvice.objectifManuelPrevious', JSON.stringify(store)); }catch(e){}
+}
+function loadConsensusManuelPrevious(){
+  try{ return JSON.parse(localStorage.getItem('stockAdvice.consensusManuelPrevious') || '{}'); }catch(e){ return {}; }
+}
+function saveConsensusManuelPrevious(ticker, value){
+  const store = loadConsensusManuelPrevious();
+  store[ticker] = value;
+  try{ localStorage.setItem('stockAdvice.consensusManuelPrevious', JSON.stringify(store)); }catch(e){}
+}
+// Flèche de tendance (stable/hausse/baisse) entre la valeur actuelle et la
+// dernière valeur réellement remplacée — voir loadObjectifManuelPrevious ci-
+// dessus. Retourne null tant qu'il n'y a encore rien à comparer (première
+// saisie jamais révisée), pour ne jamais afficher une flèche inventée.
+function trendArrowHtml(current, previous, fmtFn){
+  const curOk = !(current===null || current===undefined || isNaN(current));
+  const prevOk = !(previous===null || previous===undefined || isNaN(previous));
+  if(!curOk || !prevOk) return '';
+  const c = Number(current), p = Number(previous);
+  let symbol, color, label;
+  if(c > p){ symbol = '↑'; color = 'var(--good)'; label = 'Révisé à la hausse'; }
+  else if(c < p){ symbol = '↓'; color = 'var(--bad)'; label = 'Révisé à la baisse'; }
+  else { symbol = '→'; color = 'var(--ink)'; label = 'Stable depuis la dernière révision'; }
+  const title = `${label} (${fmtFn(p)} → ${fmtFn(c)})`;
+  return `<span title="${escapeHtml(title)}" style="color:${color}; font-weight:700; font-size:.95rem; margin-left:2px;">${symbol}</span>`;
+}
 function saveObjectifManuel(ticker, value){
   const store = loadObjectifManuel();
   const oldValue = store[ticker];
@@ -570,6 +614,12 @@ function saveObjectifManuel(ticker, value){
   const changed = hasOld && (!newIsValid || Number(value) !== Number(oldValue));
   if(changed){
     addObjectifManuelHistorique(ticker, oldValue, loadObjectifManuelDate()[ticker] || null);
+  }
+  if(hasOld){
+    // Toujours mémorisée (même en cas de ressaisie identique, voir note
+    // au-dessus de loadObjectifManuelPrevious) pour que la flèche de
+    // tendance affichée sur la fiche reste exacte à chaque enregistrement.
+    saveObjectifManuelPrevious(ticker, oldValue);
   }
   if(!newIsValid) delete store[ticker];
   else store[ticker] = value;
@@ -580,7 +630,13 @@ function loadConsensusManuel(){
 }
 function saveConsensusManuel(ticker, value){
   const store = loadConsensusManuel();
-  if(value===null || value===undefined || isNaN(value)) delete store[ticker];
+  const oldValue = store[ticker];
+  const hasOld = (oldValue !== undefined && oldValue !== null && !isNaN(oldValue));
+  const newIsValid = !(value===null || value===undefined || isNaN(value));
+  if(hasOld){
+    saveConsensusManuelPrevious(ticker, oldValue);
+  }
+  if(!newIsValid) delete store[ticker];
   else store[ticker] = value;
   try{ localStorage.setItem('stockAdvice.consensusManuel', JSON.stringify(store)); }catch(e){}
 }
@@ -773,6 +829,8 @@ function analysteBox(ticker, devise){
   const objDate = loadObjectifManuelDate()[ticker];
   const consManuel = loadConsensusManuel()[ticker];
   const consDate = loadConsensusManuelDate()[ticker];
+  const objArrow = trendArrowHtml(objManuel, loadObjectifManuelPrevious()[ticker], v => fmtPrix(v));
+  const consArrow = trendArrowHtml(consManuel, loadConsensusManuelPrevious()[ticker], v => fmt(v, 2));
   const tier = consensusTier(consManuel);
   // Jauge à 5 segments, un par palier de l'échelle (toujours dans sa propre
   // couleur pour que la progression du dégradé soit visible même avant toute
@@ -788,11 +846,13 @@ function analysteBox(ticker, devise){
       <span style="min-width:190px;">Objectif de cours (3 mois) :</span>
       <input type="number" step="0.0001" class="objectifManuelInput" data-ticker="${ticker}" placeholder="ex. 18.50" value="${objManuel!==undefined && objManuel!==null ? objManuel : ''}">
       <span style="font-size:.72rem; color:var(--ink-muted);">${devise}</span>
+      ${objArrow}
       <input type="date" class="objectifManuelDateInput" data-ticker="${ticker}" value="${objDate || ''}" title="Date de l'objectif telle qu'affichée sur la fiche source (ex. Boursorama)">
     </div>
     <div class="hist-source" id="sec-${ticker}-consensus">
       <span style="min-width:190px;">Consensus analystes :</span>
       <span class="edit-field" style="display:contents;"><input type="number" step="0.01" min="1" max="5" class="consensusManuelInput" data-ticker="${ticker}" placeholder="ex. 1.63" value="${consManuel!==undefined && consManuel!==null ? consManuel : ''}"></span>
+      ${consArrow}
       ${tier ? `<span style="font-size:.8rem; font-weight:600; padding:2px 8px; border-radius:6px; background:${tier.soft}; color:${tier.color};">${tier.label}</span>` : ''}
       <span class="edit-field" style="display:contents;"><input type="date" class="consensusManuelDateInput" data-ticker="${ticker}" value="${consDate || ''}" title="Date du consensus telle qu'affichée sur la fiche source (ex. « au 18/08/26 » sur Boursorama)"></span>
     </div>
@@ -1856,6 +1916,7 @@ function readDailyRow(ticker){
     return (el && el.value.trim() !== '') ? Number(el.value) : NaN;
   };
   const objectifDateEl = document.querySelector(`.dailyObjectifDateInput[data-ticker="${ticker}"]`);
+  const consensusDateEl = document.querySelector(`.dailyConsensusDateInput[data-ticker="${ticker}"]`);
   return {
     dernier: get('dailyDernierInput'),
     varJour: get('dailyVarInput'),
@@ -1866,6 +1927,8 @@ function readDailyRow(ticker){
     vol: get('dailyVolInput'),
     objectif: get('dailyObjectifInput'),
     objectifDate: objectifDateEl ? objectifDateEl.value : '',
+    consensus: get('dailyConsensusInput'),
+    consensusDate: consensusDateEl ? consensusDateEl.value : '',
   };
 }
 
@@ -1928,7 +1991,7 @@ function isWeeklyUpToDate(ticker){
 // voir le listener sur l'événement 'input', plus bas).
 function dailyUpdateRows(){
   if(!state.tickers.length){
-    return `<tr><td colspan="11" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
+    return `<tr><td colspan="13" style="color:var(--ink-muted); text-align:center;">Ajoutez une valeur pour commencer.</td></tr>`;
   }
   // Toujours par ordre alphabétique (ticker), indépendamment du tri choisi
   // pour la grille principale (state.sortMode) : ce panneau sert à parcourir
@@ -1943,7 +2006,7 @@ function dailyUpdateRows(){
     hint.textContent = hidden > 0 ? `${hidden} valeur${hidden>1?'s':''} déjà à jour masquée${hidden>1?'s':''}.` : '';
   }
   if(!list.length){
-    return `<tr><td colspan="11" style="color:var(--ink-muted); text-align:center;">Toutes les valeurs sont déjà à jour aujourd'hui 👍</td></tr>`;
+    return `<tr><td colspan="13" style="color:var(--ink-muted); text-align:center;">Toutes les valeurs sont déjà à jour aujourd'hui 👍</td></tr>`;
   }
   const todayStr = isoDate(new Date());
   return list.map(t => {
@@ -1962,6 +2025,8 @@ function dailyUpdateRows(){
       <td><input type="number" step="1" min="0" class="dailyVolInput" data-ticker="${t}" style="width:80px;" title="Volume converti en milliers (K)"></td>
       <td><input type="number" step="0.0001" class="dailyObjectifInput" data-ticker="${t}" placeholder="ex. 18.50" style="width:84px;" title="Objectif de cours à 3 mois — facultatif, enregistré indépendamment des cours de cette ligne"></td>
       <td><input type="date" class="dailyObjectifDateInput" data-ticker="${t}" value="${todayStr}" style="width:132px;" title="Date de l'objectif telle qu'affichée sur la fiche source — pré-remplie avec la date du jour, à corriger si besoin"></td>
+      <td><input type="number" step="0.01" min="1" max="5" class="dailyConsensusInput" data-ticker="${t}" placeholder="ex. 1.63" style="width:72px;" title="Consensus des analystes (note de 1 à 5) — facultatif, enregistré indépendamment des cours de cette ligne"></td>
+      <td><input type="date" class="dailyConsensusDateInput" data-ticker="${t}" value="${todayStr}" style="width:132px;" title="Date du consensus telle qu'affichée sur la fiche source — pré-remplie avec la date du jour, à corriger si besoin"></td>
     </tr>`;
   }).join('');
 }
@@ -2020,6 +2085,11 @@ function saveDailyUpdates(){
       saveObjectifManuel(t, row.objectif);
       saveObjectifManuelDate(t, row.objectifDate || todayStr);
       noteParts.push(`objectif ${fmtPrix(row.objectif)} (au ${frDate(row.objectifDate || todayStr)})`);
+    }
+    if(!isNaN(row.consensus)){
+      saveConsensusManuel(t, row.consensus);
+      saveConsensusManuelDate(t, row.consensusDate || todayStr);
+      noteParts.push(`consensus ${fmt(row.consensus,2)} (au ${frDate(row.consensusDate || todayStr)})`);
     }
     if(!noteParts.length) return;
     count++;
@@ -2167,6 +2237,11 @@ function weeklyUpdateBlocks(){
         <input type="number" step="0.0001" class="weeklyObjectifInput" data-ticker="${t}" placeholder="ex. 18.50" style="width:90px;" title="Objectif de cours à 3 mois — facultatif, enregistré indépendamment des séances ci-dessus">
         <input type="date" class="weeklyObjectifDateInput" data-ticker="${t}" value="${fridayStr}" style="width:132px;" title="Date de l'objectif telle qu'affichée sur la fiche source — pré-remplie avec le vendredi de la semaine en cours, à corriger si besoin">
       </div>
+      <div class="hist-source edit-field" style="margin-top:4px;">
+        <span style="min-width:120px; font-size:.82rem;">Consensus :</span>
+        <input type="number" step="0.01" min="1" max="5" class="weeklyConsensusInput" data-ticker="${t}" placeholder="ex. 1.63" style="width:90px;" title="Consensus des analystes (note de 1 à 5) — facultatif, enregistré indépendamment des séances ci-dessus">
+        <input type="date" class="weeklyConsensusDateInput" data-ticker="${t}" value="${fridayStr}" style="width:132px;" title="Date du consensus telle qu'affichée sur la fiche source — pré-remplie avec le vendredi de la semaine en cours, à corriger si besoin">
+      </div>
       <button class="weeklySaveBtn" data-action="save-weekly" data-ticker="${t}" type="button" style="margin-top:6px;">Enregistrer cette semaine</button>
       <div class="weeklyResult hist-hint" data-ticker="${t}" style="margin-top:4px;"></div>
 
@@ -2251,6 +2326,13 @@ function readWeeklyObjectif(ticker){
   const date = dateEl ? dateEl.value : '';
   return { value, date };
 }
+function readWeeklyConsensus(ticker){
+  const valEl = document.querySelector(`.weeklyConsensusInput[data-ticker="${ticker}"]`);
+  const dateEl = document.querySelector(`.weeklyConsensusDateInput[data-ticker="${ticker}"]`);
+  const value = (valEl && valEl.value.trim() !== '') ? Number(valEl.value) : NaN;
+  const date = dateEl ? dateEl.value : '';
+  return { value, date };
+}
 
 function saveWeeklyBlock(ticker){
   const cols = readWeeklyBlock(ticker);
@@ -2281,6 +2363,14 @@ function saveWeeklyBlock(ticker){
     saveObjectifManuel(ticker, obj.value);
     saveObjectifManuelDate(ticker, obj.date || fridayOfThisWeek());
     notes.push(`Objectif : ${fmtPrix(obj.value)} (au ${frDate(obj.date || fridayOfThisWeek())})`);
+  }
+  // Le consensus des analystes est, de la même façon, enregistré
+  // indépendamment des séances et de l'objectif ci-dessus.
+  const cons = readWeeklyConsensus(ticker);
+  if(!isNaN(cons.value)){
+    saveConsensusManuel(ticker, cons.value);
+    saveConsensusManuelDate(ticker, cons.date || fridayOfThisWeek());
+    notes.push(`Consensus : ${fmt(cons.value,2)} (au ${frDate(cons.date || fridayOfThisWeek())})`);
   }
   return { count, notes };
 }
@@ -3675,7 +3765,7 @@ document.getElementById('dailyUpdateSaveBtn').addEventListener('click', () => {
   const { count, notes, todayStr } = saveDailyUpdates();
   document.getElementById('dailyUpdateResult').textContent = count
     ? `${count} valeur(s) mise(s) à jour pour le ${frDate(todayStr)}. ${notes.join(' ; ')}`
-    : 'Aucune ligne complète à enregistrer (Dernier, Ouv., +Haut et +Bas sont requis pour la séance ; l\'objectif de cours, lui, peut être enregistré seul).';
+    : 'Aucune ligne complète à enregistrer (Dernier, Ouv., +Haut et +Bas sont requis pour la séance ; l\'objectif de cours et le consensus, eux, peuvent être enregistrés seuls).';
   render();
   renderDailyUpdateTable();
 });
@@ -3712,7 +3802,7 @@ document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
     if(resultEl){
       resultEl.textContent = notes.length
         ? `✅ ${count ? count + ' séance(s) enregistrée(s). ' : ''}${notes.join(' ; ')}`
-        : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer ; l'objectif de cours, lui, peut être enregistré seul).";
+        : "Aucune colonne complète à enregistrer (date, Ouv., +Haut, +Bas et Dernier sont requis pour chaque jour à enregistrer ; l'objectif de cours et le consensus, eux, peuvent être enregistrés seuls).";
     }
     render();
     return;
