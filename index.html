@@ -1760,21 +1760,39 @@ function isoDate(d){ return d.toISOString().slice(0,10); }
 function daysAgo(n){ const d = new Date(); d.setDate(d.getDate() - n); return d; }
 function startOfYear(){ const d = new Date(); return new Date(d.getFullYear(), 0, 1); }
 
-function previousTradingWeekFriday(){
-  const d = new Date();
-  const isoDow = d.getDay() === 0 ? 7 : d.getDay(); // 1=lundi ... 7=dimanche
-  const monday = new Date(d);
-  monday.setDate(d.getDate() - (isoDow - 1));
-  const friday = new Date(monday);
-  friday.setDate(monday.getDate() - 3);
-  return friday;
+// Construite en UTC (via "Z" et les accesseurs getUTC*/setUTC*) et jamais en
+// heure locale : les dates de séances sont des calendriers sans fuseau
+// ("YYYY-MM-DD"), et isoDate() ci-dessus relit toujours en UTC (toISOString).
+// Mélanger heure locale à la construction et UTC à la lecture décale tout
+// d'un jour dès que le fuseau du visiteur est en avance sur UTC (ex. la
+// France, UTC+1 ou +2) — minuit local tombe alors la veille en UTC.
+function referenceAnchorDate(ticker){
+  const store = loadHistoriqueStore();
+  const entry = store[ticker];
+  const seances = (entry && entry.seances) || [];
+  if(!seances.length) return new Date();
+  const lastDateStr = seances.reduce((max, s) => (s.date > max ? s.date : max), seances[0].date);
+  return new Date(lastDateStr + 'T00:00:00Z');
 }
-function historyWindowStart(periodKey){
-  if(periodKey === 'ytd') return startOfYear();
-  if(periodKey === '1sem') return previousTradingWeekFriday();
+function mondayOfTradingWeek(anchor){
+  const d = new Date(anchor);
+  const isoDow = d.getUTCDay() === 0 ? 7 : d.getUTCDay(); // 1=lundi ... 7=dimanche
+  d.setUTCDate(d.getUTCDate() - (isoDow - 1));
+  return d;
+}
+function firstOfMonth(anchor){
+  return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+}
+function historyWindowStart(periodKey, ticker){
+  const anchor = referenceAnchorDate(ticker);
+  if(periodKey === 'ytd') return new Date(Date.UTC(anchor.getUTCFullYear(), 0, 1));
+  if(periodKey === '1sem') return mondayOfTradingWeek(anchor);
+  if(periodKey === '1mois') return firstOfMonth(anchor);
   const p = HIST_PERIODS.find(x => x.key === periodKey);
-  return daysAgo(p ? p.days : 7);
-}     
+  const d = new Date(anchor);
+  d.setUTCDate(d.getUTCDate() - (p ? p.days : 7));
+  return d;
+}
 
 // ============ Export / import des données entre appareils ============
 // Tout ce qui est saisi dans ce widget vit uniquement dans le localStorage
@@ -1896,7 +1914,7 @@ function computeVariations(ticker, currentClose){
   const latestClose = seances.length ? seances[seances.length-1].clo : currentClose;
   const seedAnchor = entry.seed.date ? (seances.find(s => s.date >= entry.seed.date) || null) : null;
   return HIST_PERIODS.map(p => {
-    const windowStart = historyWindowStart(p.key);
+    const windowStart = historyWindowStart(p.key, ticker);
     const windowStartStr = isoDate(windowStart);
     const inWindow = seances.filter(s => s.date >= windowStartStr);
     const seed = entry.seed.periods[p.key] || {};
@@ -2793,9 +2811,9 @@ function parseWeeklyFullPaste(ticker, text){
 // Date de début de fenêtre pour une période du tableau d'historique (même
 // logique que computeVariations, factorisée ici pour que le graphique et le
 // tableau restent toujours cohérents entre eux).
-function periodWindowStartIso(periodKey){
+function periodWindowStartIso(periodKey, ticker){
   const p = HIST_PERIODS.find(x => x.key === periodKey) || HIST_PERIODS[1]; // repli : "1 semaine"
-  return isoDate(historyWindowStart(p.key));
+  return isoDate(historyWindowStart(p.key, ticker));
 }
 
 const CHART_W = 600, CHART_PRICE_H = 128, CHART_VOL_H = 32;
@@ -2830,7 +2848,7 @@ function priceChartSvg(ticker, currentClose, devise, objectifRetenu){
   const hasCustomRange = !!(customRange && customRange.from && customRange.to && customRange.from <= customRange.to);
   const periodKey = state.chartPeriod[ticker] || '1sem';
   const period = HIST_PERIODS.find(p => p.key === periodKey) || HIST_PERIODS[1];
-  const windowStartStr = hasCustomRange ? customRange.from : periodWindowStartIso(periodKey);
+  const windowStartStr = hasCustomRange ? customRange.from : periodWindowStartIso(periodKey, ticker);
   const windowEndStr = hasCustomRange ? customRange.to : null;
   const windowLabel = hasCustomRange ? `${frDate(customRange.from)} → ${frDate(customRange.to)}` : period.label;
 
