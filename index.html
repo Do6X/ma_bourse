@@ -1892,8 +1892,9 @@ function computeVariations(ticker, currentClose){
   const entry = store[ticker];
   if(!entry || !entry.seed) return null;
   const seances = (entry.seances || []).slice().sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
-  const earliest = seances.length ? seances[0] : null;
+    const earliest = seances.length ? seances[0] : null;
   const latestClose = seances.length ? seances[seances.length-1].clo : currentClose;
+  const seedAnchor = entry.seed.date ? (seances.find(s => s.date >= entry.seed.date) || null) : null;
   return HIST_PERIODS.map(p => {
     const windowStart = historyWindowStart(p.key);
     const windowStartStr = isoDate(windowStart);
@@ -1931,8 +1932,8 @@ function computeVariations(ticker, currentClose){
       const ref = inWindow[0] || earliest;
       var_pct = ((latestClose - ref.clo) / ref.clo) * 100;
       computed = true;
-    } else if(earliest && seed.var_pct !== undefined && seed.var_pct !== null){
-      var_pct = ((1 + seed.var_pct/100) * (latestClose / earliest.clo) - 1) * 100;
+     } else if(seedAnchor && seed.var_pct !== undefined && seed.var_pct !== null){
+      var_pct = ((1 + seed.var_pct/100) * (latestClose / seedAnchor.clo) - 1) * 100;
       computed = false;
     } else {
       var_pct = seed.var_pct;
