@@ -4278,7 +4278,7 @@ document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
   // panneau via renderWeeklyUpdatePanel/render), pour ne jamais perdre une
   // saisie en cours dans un autre bloc (séances ou historique d'une autre
   // valeur) pendant que le panneau reste ouvert.
-  const toggleWeeklyHistBtn = e.target.closest('[data-action="toggle-weekly-hist-form"]');
+    const toggleWeeklyHistBtn = e.target.closest('[data-action="toggle-weekly-hist-form"]');
   if(toggleWeeklyHistBtn){
     const t = toggleWeeklyHistBtn.dataset.ticker;
     if(state.histOpenForms.has(t)) state.histOpenForms.delete(t); else state.histOpenForms.add(t);
@@ -4286,6 +4286,7 @@ document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
     toggleWeeklyHistBtn.classList.toggle('open', isOpen);
     const body = toggleWeeklyHistBtn.nextElementSibling;
     if(body) body.hidden = !isOpen;
+    if(isOpen) renderSeedPreview(t, 'weeklyHistPreview', 'weeklyHistSeedInput');
     return;
   }
   const parseWeeklyHistBtn = e.target.closest('[data-action="parse-weekly-hist-paste"]');
