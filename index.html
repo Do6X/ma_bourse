@@ -2533,8 +2533,8 @@ function weeklyUpdateBlocks(){
 
       <div style="margin-top:10px; padding-top:8px; border-top:1px dashed var(--border);">
         <button class="hist-toggle${histOpen ? ' open' : ''}" data-action="toggle-weekly-hist-form" data-ticker="${t}">📜 Historique de référence (périodes)${existingSeed ? ' — saisi le ' + frDate(existingSeed.date) : ' — non saisi'}<span class="chevron">›</span></button>
-        <div ${histOpen ? '' : 'hidden'}>
-          <p class="hist-hint">Variations par période (1 semaine à 10 ans) de ${t} — pratique pour les rafraîchir en même temps que les séances ci-dessus, sans ouvrir sa fiche. Collez le tableau copié depuis Boursorama, ou corrigez les champs à la main ; les champs déjà enregistrés sont pré-remplis.</p>
+               <div ${histOpen ? '' : 'hidden'}>
+          <p class="hist-hint">Variations par période (1 semaine à 10 ans) de ${t} — pratique pour les rafraîchir en même temps que les séances ci-dessus, sans ouvrir sa fiche. Collez le tableau copié depuis Boursorama, ou corrigez les champs à la main ; les champs déjà enregistrés sont pré-remplis. Un seul bouton pour tout enregistrer : « Enregistrer cette semaine » ci-dessus sauvegarde aussi ce qui est saisi ici — rien d'autre à cliquer.</p>
           <div class="hist-paste-row">
             <textarea class="weeklyHistPaste" data-ticker="${t}" placeholder="Collez ici le tableau copié (1er janvier ... 10 ans)"></textarea>
             <button data-action="parse-weekly-hist-paste" data-ticker="${t}">Analyser</button>
@@ -2544,8 +2544,6 @@ function weeklyUpdateBlocks(){
             <tbody>${seedRows}</tbody>
           </table>
           <div class="weeklyHistPreview hist-preview" data-ticker="${t}"></div>
-          <button data-action="save-weekly-hist" data-ticker="${t}" style="margin-top:6px;">Enregistrer l'historique de référence</button>
-          <div class="weeklyHistResult hist-hint" data-ticker="${t}" style="margin-top:4px;"></div>
         </div>
       </div>
     </div>`;
@@ -2666,12 +2664,14 @@ function saveWeeklyBlock(ticker){
   }
   // Le consensus des analystes est, de la même façon, enregistré
   // indépendamment des séances et de l'objectif ci-dessus.
-  const cons = readWeeklyConsensus(ticker);
+    const cons = readWeeklyConsensus(ticker);
   if(!isNaN(cons.value)){
     saveConsensusManuel(ticker, cons.value);
     saveConsensusManuelDate(ticker, cons.date || fridayOfThisWeek());
     notes.push(`Consensus : ${fmt(cons.value,2)} (au ${frDate(cons.date || fridayOfThisWeek())})`);
   }
+  const seedDate = saveWeeklyHistSeed(ticker);
+  if(seedDate) notes.push(`Historique de référence (périodes) enregistré (daté du ${frDate(seedDate)}).`);
   return { count, notes };
 }
 
@@ -4295,19 +4295,6 @@ document.getElementById('weeklyUpdatePanel').addEventListener('click', e => {
     const periods = parseBoursoramaPaste(textEl ? textEl.value : '');
     fillSeedInputs(t, periods, 'weeklyHistSeedInput');
     renderSeedPreview(t, 'weeklyHistPreview', 'weeklyHistSeedInput');
-    return;
-  }
-  const saveWeeklyHistBtn = e.target.closest('[data-action="save-weekly-hist"]');
-  if(saveWeeklyHistBtn){
-    const t = saveWeeklyHistBtn.dataset.ticker;
-    const resultEl = document.querySelector(`.weeklyHistResult[data-ticker="${t}"]`);
-    const seedDate = saveWeeklyHistSeed(t);
-    if(seedDate === null){
-      if(resultEl) resultEl.textContent = 'Rien à enregistrer — collez le tableau ou renseignez au moins une période.';
-      return;
-    }
-    if(resultEl) resultEl.textContent = `✅ Historique de référence enregistré (daté du ${frDate(seedDate)}).`;
-    render();
     return;
   }
 });
