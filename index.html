@@ -1760,6 +1760,22 @@ function isoDate(d){ return d.toISOString().slice(0,10); }
 function daysAgo(n){ const d = new Date(); d.setDate(d.getDate() - n); return d; }
 function startOfYear(){ const d = new Date(); return new Date(d.getFullYear(), 0, 1); }
 
+function previousTradingWeekFriday(){
+  const d = new Date();
+  const isoDow = d.getDay() === 0 ? 7 : d.getDay(); // 1=lundi ... 7=dimanche
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - (isoDow - 1));
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() - 3);
+  return friday;
+}
+function historyWindowStart(periodKey){
+  if(periodKey === 'ytd') return startOfYear();
+  if(periodKey === '1sem') return previousTradingWeekFriday();
+  const p = HIST_PERIODS.find(x => x.key === periodKey);
+  return daysAgo(p ? p.days : 7);
+}     
+
 // ============ Export / import des données entre appareils ============
 // Tout ce qui est saisi dans ce widget vit uniquement dans le localStorage
 // de CET appareil (voir la note sous le champ URL du backend) — il n'y a
@@ -1879,7 +1895,7 @@ function computeVariations(ticker, currentClose){
   const earliest = seances.length ? seances[0] : null;
   const latestClose = seances.length ? seances[seances.length-1].clo : currentClose;
   return HIST_PERIODS.map(p => {
-    const windowStart = p.key === 'ytd' ? startOfYear() : daysAgo(p.days);
+    const windowStart = historyWindowStart(p.key);
     const windowStartStr = isoDate(windowStart);
     const inWindow = seances.filter(s => s.date >= windowStartStr);
     const seed = entry.seed.periods[p.key] || {};
@@ -2778,7 +2794,7 @@ function parseWeeklyFullPaste(ticker, text){
 // tableau restent toujours cohérents entre eux).
 function periodWindowStartIso(periodKey){
   const p = HIST_PERIODS.find(x => x.key === periodKey) || HIST_PERIODS[1]; // repli : "1 semaine"
-  return isoDate(p.key === 'ytd' ? startOfYear() : daysAgo(p.days));
+  return isoDate(historyWindowStart(p.key));
 }
 
 const CHART_W = 600, CHART_PRICE_H = 128, CHART_VOL_H = 32;
