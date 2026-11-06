@@ -1978,7 +1978,23 @@ function weeklyTrendArrow(ticker, currentClose){
   const arrow = hausse ? '↗' : (baisse ? '↘' : '→');
   const color = hausse ? 'var(--good)' : (baisse ? 'var(--bad)' : 'var(--ink)');
   const label = hausse ? 'Hausse' : (baisse ? 'Baisse' : 'Stagnation');
-  return ` <span style="color:${color}; font-weight:700; cursor:help;" title="Tendance sur la semaine écoulée : ${label} (${pct>0?'+':''}${fmt(pct,2)}%)">${arrow}</span>`;
+  // Étiqueté "Semaine" + son propre chiffre, jamais une flèche nue : sinon,
+  // un cours en baisse sur la journée affiché juste à côté d'une flèche en
+  // hausse (deux échelles de temps différentes) donne à tort l'impression
+  // d'une contradiction entre les deux informations.
+  return ` <span style="font-size:.68rem; color:var(--ink-muted); margin-left:4px;">Semaine</span> <span style="color:${color}; font-weight:700; cursor:help;" title="Tendance sur la semaine écoulée : ${label} (${pct>0?'+':''}${fmt(pct,2)}%)">${pct>0?'+':''}${fmt(pct,2)}% ${arrow}</span>`;
+}
+
+// Ligne "cours + variation du jour + tendance de la semaine", réutilisée à la
+// fois par la fiche normale et par la fiche en mode saisie manuelle (API en
+// échec) — factorisée ici pour que les deux restent toujours cohérentes et
+// que la variation du jour soit elle aussi toujours étiquetée ("Jour"), pour
+// la même raison que ci-dessus.
+function priceLineHtml(cours, devise, dailyVarPct, ticker){
+  const dailyPart = (dailyVarPct === null || dailyVarPct === undefined || isNaN(dailyVarPct))
+    ? ''
+    : ` <span style="font-size:.68rem; color:var(--ink-muted);">Jour</span> ${variationBadge(dailyVarPct)}`;
+  return `${fmtPrix(cours)} ${devise}${dailyPart}${weeklyTrendArrow(ticker, cours)}`;
 }
 
 // Ligne compacte "Plus/moins-value" réutilisable (ex. juste sous la date de
@@ -3285,7 +3301,7 @@ function cardContent(ticker, d, alertMsgs){
     const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
     const pnlTopLine0 = plusMoinsValueInline(ticker, cours, deviseGuess);
     const priceLine = cours !== null
-      ? `<div class="price">${fmtPrix(cours)} ${deviseGuess} ${variationBadge(dailyVarPct0)}${weeklyTrendArrow(ticker, cours)}</div>
+      ? `<div class="price">${priceLineHtml(cours, deviseGuess, dailyVarPct0, ticker)}</div>
          <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>
          ${pnlTopLine0 ? `<div class="price-top-pnl">${pnlTopLine0}</div>` : ''}`
       : '';
@@ -3434,7 +3450,7 @@ function cardContent(ticker, d, alertMsgs){
     </div>
     ${checklistBox(ticker)}
     <span class="badge ${d.conseil}" title="${escapeHtml(conseilTooltip(d))}">${d.conseil}</span><span style="font-size:.72rem; color:var(--ink-muted); margin-left:5px; cursor:help;" title="${escapeHtml(conseilTooltip(d))}">score ${d.scoring && d.scoring.global!==null && d.scoring.global!==undefined ? fmt(d.scoring.global,2)+'/10' : '—'} ⓘ</span>
-    <div class="price">${fmtPrix(cours)} ${devise} ${variationBadge(dailyVarPct)}${weeklyTrendArrow(ticker, cours)}</div>
+    <div class="price">${priceLineHtml(cours, devise, dailyVarPct, ticker)}</div>
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     ${pnlTopLine ? `<div class="price-top-pnl">${pnlTopLine}</div>` : ''}
     <div class="kv">
