@@ -1,0 +1,13 @@
+{
+  "name": "Ma Bourse",
+  "short_name": "Ma Bourse",
+  "icons": [
+    { "src": "icon-master.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "icon-1024.png", "type": "image/png", "sizes": "1024x1024" }
+  ],
+  "display": "standalone",
+  "theme_color": "#6050DC",
+  "background_color": "#6050DC"
+}
