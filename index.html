@@ -2002,14 +2002,16 @@ function weeklyTrendLine(ticker, currentClose){
   return `<div style="font-size:.78rem; margin:-2px 0 6px;"><span style="font-size:.68rem; color:var(--ink-muted);">Semaine</span> <span style="color:${color}; font-weight:700; cursor:help;" title="Tendance sur la semaine écoulée : ${label} (${pct>0?'+':''}${fmt(pct,2)}%)">${pct>0?'+':''}${fmt(pct,2)}% ${arrow}</span></div>`;
 }
 
-// Bloc complet "cours (grand) + ligne du jour (avec plus haut/plus bas de la
-// dernière séance) + ligne de la semaine", réutilisé à la fois par la fiche
-// normale et par la fiche en mode saisie manuelle (API en échec) — factorisé
-// ici pour que les deux restent toujours cohérentes. Le plus haut/plus bas du
-// jour ne sont affichés que lorsqu'ils proviennent réellement de la séance du
-// jour même (dailyHaut/dailyBas doivent être transmis à null sinon par
-// l'appelant) — jamais ceux d'une séance plus ancienne, pour la même raison
-// que dailyVarPct est lui-même mis à null dans ce cas (voir son calcul).
+// Bloc complet "cours (grand) + ligne de la dernière séance (variation,
+// tendance, plus haut/plus bas de CETTE séance) + ligne de la semaine",
+// réutilisé à la fois par la fiche normale et par la fiche en mode saisie
+// manuelle (API en échec) — factorisé ici pour que les deux restent toujours
+// cohérentes. Étiqueté "Séance" et pas "Jour" : ces valeurs sont celles de la
+// dernière séance enregistrée, quelle que soit sa date (saisie hebdomadaire
+// la plupart du temps, pas forcément celle du jour même) — exactement comme
+// "la dernière séance" dont parle Boursorama, pas "les dernières 24h".
+// L'éventuelle péremption de cette séance (si elle date d'il y a longtemps)
+// est déjà signalée ailleurs sur la fiche (voir priceFreshnessNote), pas ici.
 function priceLineHtml(cours, devise, dailyVarPct, ticker, dailyHaut, dailyBas){
   let dayLine = '';
   if(dailyVarPct !== null && dailyVarPct !== undefined && !isNaN(dailyVarPct)){
@@ -2019,7 +2021,7 @@ function priceLineHtml(cours, devise, dailyVarPct, ticker, dailyHaut, dailyBas){
     const hautBasPart = hasHautBas
       ? ` · <span style="color:var(--ink-muted);">Haut ${fmtPrix(dailyHaut)} ${devise} · Bas ${fmtPrix(dailyBas)} ${devise}</span>`
       : '';
-    dayLine = `<div style="font-size:.78rem; margin:-2px 0 2px;"><span style="font-size:.68rem; color:var(--ink-muted);">Jour</span> <span style="color:${color}; font-weight:700;">${dailyVarPct>0?'+':''}${fmt(dailyVarPct,2)}% ${arrow}</span>${hautBasPart}</div>`;
+    dayLine = `<div style="font-size:.78rem; margin:-2px 0 2px;"><span style="font-size:.68rem; color:var(--ink-muted);">Séance</span> <span style="color:${color}; font-weight:700;">${dailyVarPct>0?'+':''}${fmt(dailyVarPct,2)}% ${arrow}</span>${hautBasPart}</div>`;
   }
   return `<div class="price">${fmtPrix(cours)} ${devise}</div>${dayLine}${weeklyTrendLine(ticker, cours)}`;
 }
@@ -3319,11 +3321,13 @@ function cardContent(ticker, d, alertMsgs){
     const nomManuel = escapeHtml(loadNomManuel()[ticker]);
     const manualSeance = getManualLatestSeance(ticker);
     const cours = manualSeance ? manualSeance.clo : null;
-    const todayStr0 = isoDate(new Date());
-    const dailyVarPct0 = (manualSeance && manualSeance.date === todayStr0 && manualSeance.var_pct !== undefined)
-      ? manualSeance.var_pct : null;
-    const dailyHaut0 = (manualSeance && manualSeance.date === todayStr0) ? manualSeance.haut : null;
-    const dailyBas0 = (manualSeance && manualSeance.date === todayStr0) ? manualSeance.bas : null;
+    // Variation/haut/bas de la DERNIÈRE séance saisie, quelle que soit sa
+    // date (voir le commentaire sur priceLineHtml) — cette fiche n'a de
+    // toute façon aucune autre source que votre saisie manuelle, l'API étant
+    // en échec ici.
+    const dailyVarPct0 = (manualSeance && manualSeance.var_pct !== undefined) ? manualSeance.var_pct : null;
+    const dailyHaut0 = manualSeance ? manualSeance.haut : null;
+    const dailyBas0 = manualSeance ? manualSeance.bas : null;
     const objManuel = loadObjectifManuel()[ticker];
     const objDate0 = loadObjectifManuelDate()[ticker];
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
@@ -3399,26 +3403,25 @@ function cardContent(ticker, d, alertMsgs){
   // vous avez vous-même vérifiée qui fait foi, pas l'estimation automatique.
   const manualSeance = getManualLatestSeance(ticker);
   const cours = manualSeance ? manualSeance.clo : d.seance.close;
-  // Variation du jour à afficher juste à côté du cours (vert/rouge/noir) :
-  // votre séance du jour si vous l'avez déjà saisie, sinon celle renvoyée par
-  // le backend (mais seulement tant qu'aucune séance manuelle n'existe du
-  // tout — dès qu'une séance manuelle plus ancienne existe, le cours affiché
-  // n'est déjà plus "celui du jour", donc on n'affiche alors aucune variation
-  // du jour trompeuse : voir priceFreshnessNote pour la transparence sur la
-  // date réelle du cours affiché dans ce cas).
-  const todayStr = isoDate(new Date());
-  const dailyVarPct = (manualSeance && manualSeance.date === todayStr && manualSeance.var_pct !== undefined)
+  // Variation/haut/bas de la DERNIÈRE séance, à afficher juste sous le cours
+  // (voir priceLineHtml) : votre dernière séance saisie à la main si elle
+  // existe (quelle que soit sa date — aussi bien celle du jour qu'une
+  // séance plus ancienne, puisque "cours" ci-dessus en reprend déjà la
+  // clôture dans ce cas), sinon celle renvoyée par le backend, mais
+  // seulement tant qu'aucune séance manuelle n'existe du tout. La
+  // péremption éventuelle de cette séance est déjà signalée séparément par
+  // priceFreshnessNote plus bas, pas ici.
+  const dailyVarPct = (manualSeance && manualSeance.var_pct !== undefined)
     ? manualSeance.var_pct
     : (!manualSeance && d.seance && d.seance.variation_jour_pct !== undefined && d.seance.variation_jour_pct !== null)
       ? d.seance.variation_jour_pct
       : null;
-  // Plus haut/plus bas de la dernière séance, affichés à côté de sa
-  // variation — uniquement quand on dispose réellement d'une séance saisie
-  // à la main pour aujourd'hui : l'API backend ne renvoie pas ces deux
+  // Plus haut/plus bas de cette même dernière séance — uniquement quand elle
+  // vient de votre saisie manuelle : l'API backend ne renvoie pas ces deux
   // valeurs (seulement la clôture et la variation %), donc rien à afficher
   // dans ce cas plutôt qu'inventer une fourchette.
-  const dailyHaut = (manualSeance && manualSeance.date === todayStr) ? manualSeance.haut : null;
-  const dailyBas = (manualSeance && manualSeance.date === todayStr) ? manualSeance.bas : null;
+  const dailyHaut = manualSeance ? manualSeance.haut : null;
+  const dailyBas = manualSeance ? manualSeance.bas : null;
   // Objectif de cours 3 mois : votre saisie manuelle (ex. copiée depuis
   // Boursorama) prend systématiquement le pas sur l'estimation du backend,
   // et le potentiel (%) est toujours recalculé ICI par rapport au cours
