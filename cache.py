@@ -51,17 +51,44 @@ class Cache:
 
     # -- API commune -------------------------------------------------------
     def get(self, key: str) -> Optional[Any]:
+        found, value = self._get_with_presence(key)
+        return value if found else None
+
+    def _get_with_presence(self, key: str) -> tuple[bool, Any]:
+        """Comme get(), mais indique explicitement si une entree EXISTAIT en
+        cache (meme si sa valeur est None/vide), au lieu de deduire l'absence
+        depuis la seule valeur renvoyee.
+
+        Necessaire pour get_or_set() ci-dessous : plusieurs compute_fn()
+        renvoient legitimement None en cas d'echec amont gere proprement
+        (ex. fmp_get() dans analysis.py renvoie None quand FMP repond 402
+        pour un ticker hors couverture du plan actuel - systematique pour
+        toutes les valeurs Euronext Paris, cf. README section "Valeurs
+        Euronext Paris"). Avant ce correctif, get_or_set() testait
+        `cached is not None` : une valeur None correctement ecrite en cache
+        par set() etait donc relue comme "rien en cache" et recalculee a
+        CHAQUE appel au lieu d'etre reutilisee pendant TTL_HISTORIQUE (1h).
+        Pour un ticker comme MC.PA, cela repete inutilement a chaque
+        rafraichissement les 7 appels FMP sequentiels de analyze_stock()
+        (ratios-ttm, key-metrics-ttm, income-statement-growth,
+        price-target-consensus, grades-consensus, dividends, earnings),
+        alourdissant chaque requete /api/advice - un facteur aggravant
+        plausible derriere un "Load failed" cote navigateur si cette latence
+        cumulee s'ajoute a un demarrage a froid du service (plan gratuit
+        Render) ou a un ralentissement momentane de FMP."""
         if self.backend == "redis":
             raw = self._redis.get(key)
-            return json.loads(raw) if raw else None
+            if raw is None:
+                return False, None
+            return True, json.loads(raw)
         path = _LOCAL_CACHE_DIR / f"{_safe(key)}.json"
         if not path.exists():
-            return None
+            return False, None
         payload = json.loads(path.read_text())
         if payload["expires_at"] < time.time():
             path.unlink(missing_ok=True)
-            return None
-        return payload["value"]
+            return False, None
+        return True, payload["value"]
 
     def set(self, key: str, value: Any, ttl_seconds: int) -> None:
         if self.backend == "redis":
@@ -71,8 +98,8 @@ class Cache:
         path.write_text(json.dumps({"expires_at": time.time() + ttl_seconds, "value": value}))
 
     def get_or_set(self, key: str, ttl_seconds: int, compute_fn):
-        cached = self.get(key)
-        if cached is not None:
+        found, cached = self._get_with_presence(key)
+        if found:
             return cached, True  # (valeur, etait_en_cache)
         value = compute_fn()
         self.set(key, value, ttl_seconds)
