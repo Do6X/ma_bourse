@@ -1103,14 +1103,6 @@ function pctSpan(pct, decimals){
   const color = pct>0 ? 'var(--good)' : (pct<0 ? 'var(--bad)' : 'var(--ink)');
   return `<span style="color:${color}">${pct>0?'+':''}${fmt(pct,d)}%</span>`;
 }
-// Badge de variation du jour, affiché juste à côté du cours — vert/rouge/noir
-// selon le signe, comme demandé (même logique que pctSpan, en plus visible).
-function variationBadge(pct){
-  if(pct===null || pct===undefined || isNaN(pct)) return '';
-  const color = pct>0 ? 'var(--good)' : (pct<0 ? 'var(--bad)' : 'var(--ink)');
-  return `<span style="font-size:.85rem; font-weight:600; color:${color};">${pct>0?'+':''}${fmt(pct,2)}%</span>`;
-}
-
 // Objectifs de cours d'autres analystes, en complément de l'objectif
 // « principal » (Boursorama, ci-dessus) : plusieurs valeurs possibles, une
 // source (texte libre ou URL) par entrée, jamais fusionnées entre elles —
@@ -1433,10 +1425,28 @@ function resolveTickerOrName(raw){
   return isValidTickerFormat(upper) ? {ticker: upper} : {ticker: null};
 }
 
+// Mis en cache en mémoire : c'est de très loin la plus grosse donnée du
+// widget (tout l'historique, toutes les valeurs confondues), et une seule
+// fiche la relit déjà une bonne vingtaine de fois par rafraîchissement
+// (computeVariations × 2 par fiche, dont 9 relectures internes — une par
+// période —, plus le graphique et le cours du jour) : sans ce cache, chaque
+// rafraîchissement de l'écran re-décode ce même JSON potentiellement
+// volumineux des dizaines de fois par valeur suivie, pour rien, puisqu'il
+// n'a pas changé entre deux lectures. Invalidé uniquement par
+// saveHistoriqueStore() ci-dessous, le seul autre endroit du fichier qui
+// écrit cette clé : aucun risque de lire une version périmée. (L'import de
+// données, qui remplace cette clé par un autre chemin, recharge de toute
+// façon la page ensuite — voir importAllData — ce qui repart d'un cache
+// vide.)
+let _historiqueStoreCache = null;
 function loadHistoriqueStore(){
-  try{ return JSON.parse(localStorage.getItem('stockAdvice.historique') || '{}'); }catch(e){ return {}; }
+  if(_historiqueStoreCache) return _historiqueStoreCache;
+  try{ _historiqueStoreCache = JSON.parse(localStorage.getItem('stockAdvice.historique') || '{}'); }
+  catch(e){ _historiqueStoreCache = {}; }
+  return _historiqueStoreCache;
 }
 function saveHistoriqueStore(store){
+  _historiqueStoreCache = store;
   try{ localStorage.setItem('stockAdvice.historique', JSON.stringify(store)); }catch(e){}
 }
 function loadSourceUrls(){
@@ -1961,40 +1971,57 @@ function computeVariations(ticker, currentClose){
   });
 }
 
-// Flèche colorée affichée juste à côté du dernier cours, pour voir en un coup
-// d'oeil l'orientation de la semaine écoulée (même seuil ±0,5 % que partout
-// ailleurs dans la fiche pour la plus/moins-value et les variations) :
-// ↗ verte = hausse, ↘ rouge = baisse, → noire = stagnation. S'appuie sur
-// computeVariations() (période "1sem"), donc nécessite qu'un historique ait
-// déjà été saisi au moins une fois pour ce titre — sinon rien n'est affiché
-// (pas de donnée inventée).
-function weeklyTrendArrow(ticker, currentClose){
+// Flèche/couleur/libellé pour une variation % donnée, avec le même seuil
+// ±0,5 % partout dans la fiche (jour, semaine, plus/moins-value...) —
+// factorisé ici (au lieu d'être recalculé séparément à chaque endroit qui
+// affiche une tendance) pour que ce seuil ne puisse jamais diverger d'un
+// endroit à l'autre. ↗ verte = hausse, ↘ rouge = baisse, → noire = stagnation.
+function trendArrowInfo(pct){
+  const hausse = pct > 0.5, baisse = pct < -0.5;
+  return {
+    arrow: hausse ? '↗' : (baisse ? '↘' : '→'),
+    color: hausse ? 'var(--good)' : (baisse ? 'var(--bad)' : 'var(--ink)'),
+    label: hausse ? 'Hausse' : (baisse ? 'Baisse' : 'Stagnation'),
+  };
+}
+
+// Ligne "Semaine ±x,xx% ↗", sur sa propre ligne sous le cours — jamais une
+// flèche nue : un cours en baisse sur la journée affiché juste à côté d'une
+// flèche de tendance hebdomadaire en hausse (deux échelles de temps
+// différentes) donnerait à tort l'impression d'une contradiction entre les
+// deux informations. S'appuie sur computeVariations() (période "1sem"), donc
+// nécessite qu'un historique ait déjà été saisi au moins une fois pour ce
+// titre — sinon rien n'est affiché (pas de donnée inventée).
+function weeklyTrendLine(ticker, currentClose){
   const variations = computeVariations(ticker, currentClose);
   if(!variations) return '';
   const semaine = variations.find(v => v.key === '1sem');
   if(!semaine || semaine.var_pct === null || semaine.var_pct === undefined || isNaN(semaine.var_pct)) return '';
   const pct = semaine.var_pct;
-  const hausse = pct > 0.5, baisse = pct < -0.5;
-  const arrow = hausse ? '↗' : (baisse ? '↘' : '→');
-  const color = hausse ? 'var(--good)' : (baisse ? 'var(--bad)' : 'var(--ink)');
-  const label = hausse ? 'Hausse' : (baisse ? 'Baisse' : 'Stagnation');
-  // Étiqueté "Semaine" + son propre chiffre, jamais une flèche nue : sinon,
-  // un cours en baisse sur la journée affiché juste à côté d'une flèche en
-  // hausse (deux échelles de temps différentes) donne à tort l'impression
-  // d'une contradiction entre les deux informations.
-  return ` <span style="font-size:.68rem; color:var(--ink-muted); margin-left:4px;">Semaine</span> <span style="color:${color}; font-weight:700; cursor:help;" title="Tendance sur la semaine écoulée : ${label} (${pct>0?'+':''}${fmt(pct,2)}%)">${pct>0?'+':''}${fmt(pct,2)}% ${arrow}</span>`;
+  const {arrow, color, label} = trendArrowInfo(pct);
+  return `<div style="font-size:.78rem; margin:-2px 0 6px;"><span style="font-size:.68rem; color:var(--ink-muted);">Semaine</span> <span style="color:${color}; font-weight:700; cursor:help;" title="Tendance sur la semaine écoulée : ${label} (${pct>0?'+':''}${fmt(pct,2)}%)">${pct>0?'+':''}${fmt(pct,2)}% ${arrow}</span></div>`;
 }
 
-// Ligne "cours + variation du jour + tendance de la semaine", réutilisée à la
-// fois par la fiche normale et par la fiche en mode saisie manuelle (API en
-// échec) — factorisée ici pour que les deux restent toujours cohérentes et
-// que la variation du jour soit elle aussi toujours étiquetée ("Jour"), pour
-// la même raison que ci-dessus.
-function priceLineHtml(cours, devise, dailyVarPct, ticker){
-  const dailyPart = (dailyVarPct === null || dailyVarPct === undefined || isNaN(dailyVarPct))
-    ? ''
-    : ` <span style="font-size:.68rem; color:var(--ink-muted);">Jour</span> ${variationBadge(dailyVarPct)}`;
-  return `${fmtPrix(cours)} ${devise}${dailyPart}${weeklyTrendArrow(ticker, cours)}`;
+// Bloc complet "cours (grand) + ligne du jour (avec plus haut/plus bas de la
+// dernière séance) + ligne de la semaine", réutilisé à la fois par la fiche
+// normale et par la fiche en mode saisie manuelle (API en échec) — factorisé
+// ici pour que les deux restent toujours cohérentes. Le plus haut/plus bas du
+// jour ne sont affichés que lorsqu'ils proviennent réellement de la séance du
+// jour même (dailyHaut/dailyBas doivent être transmis à null sinon par
+// l'appelant) — jamais ceux d'une séance plus ancienne, pour la même raison
+// que dailyVarPct est lui-même mis à null dans ce cas (voir son calcul).
+function priceLineHtml(cours, devise, dailyVarPct, ticker, dailyHaut, dailyBas){
+  let dayLine = '';
+  if(dailyVarPct !== null && dailyVarPct !== undefined && !isNaN(dailyVarPct)){
+    const {arrow, color} = trendArrowInfo(dailyVarPct);
+    const hasHautBas = dailyHaut !== null && dailyHaut !== undefined && !isNaN(dailyHaut)
+      && dailyBas !== null && dailyBas !== undefined && !isNaN(dailyBas);
+    const hautBasPart = hasHautBas
+      ? ` · <span style="color:var(--ink-muted);">Haut ${fmtPrix(dailyHaut)} ${devise} · Bas ${fmtPrix(dailyBas)} ${devise}</span>`
+      : '';
+    dayLine = `<div style="font-size:.78rem; margin:-2px 0 2px;"><span style="font-size:.68rem; color:var(--ink-muted);">Jour</span> <span style="color:${color}; font-weight:700;">${dailyVarPct>0?'+':''}${fmt(dailyVarPct,2)}% ${arrow}</span>${hautBasPart}</div>`;
+  }
+  return `<div class="price">${fmtPrix(cours)} ${devise}</div>${dayLine}${weeklyTrendLine(ticker, cours)}`;
 }
 
 // Ligne compacte "Plus/moins-value" réutilisable (ex. juste sous la date de
@@ -3295,13 +3322,15 @@ function cardContent(ticker, d, alertMsgs){
     const todayStr0 = isoDate(new Date());
     const dailyVarPct0 = (manualSeance && manualSeance.date === todayStr0 && manualSeance.var_pct !== undefined)
       ? manualSeance.var_pct : null;
+    const dailyHaut0 = (manualSeance && manualSeance.date === todayStr0) ? manualSeance.haut : null;
+    const dailyBas0 = (manualSeance && manualSeance.date === todayStr0) ? manualSeance.bas : null;
     const objManuel = loadObjectifManuel()[ticker];
     const objDate0 = loadObjectifManuelDate()[ticker];
     const hasObjManuel = objManuel !== undefined && objManuel !== null && !isNaN(objManuel);
     const potentielPct = (hasObjManuel && cours) ? ((objManuel - cours) / cours) * 100 : null;
     const pnlTopLine0 = plusMoinsValueInline(ticker, cours, deviseGuess);
     const priceLine = cours !== null
-      ? `<div class="price">${priceLineHtml(cours, deviseGuess, dailyVarPct0, ticker)}</div>
+      ? `${priceLineHtml(cours, deviseGuess, dailyVarPct0, ticker, dailyHaut0, dailyBas0)}
          <div style="margin:-4px 0 4px;"><span style="font-size:.72rem; color:var(--ink-muted);">cours saisi le ${frDate(manualSeance.date)}</span></div>
          ${pnlTopLine0 ? `<div class="price-top-pnl">${pnlTopLine0}</div>` : ''}`
       : '';
@@ -3383,6 +3412,13 @@ function cardContent(ticker, d, alertMsgs){
     : (!manualSeance && d.seance && d.seance.variation_jour_pct !== undefined && d.seance.variation_jour_pct !== null)
       ? d.seance.variation_jour_pct
       : null;
+  // Plus haut/plus bas de la dernière séance, affichés à côté de sa
+  // variation — uniquement quand on dispose réellement d'une séance saisie
+  // à la main pour aujourd'hui : l'API backend ne renvoie pas ces deux
+  // valeurs (seulement la clôture et la variation %), donc rien à afficher
+  // dans ce cas plutôt qu'inventer une fourchette.
+  const dailyHaut = (manualSeance && manualSeance.date === todayStr) ? manualSeance.haut : null;
+  const dailyBas = (manualSeance && manualSeance.date === todayStr) ? manualSeance.bas : null;
   // Objectif de cours 3 mois : votre saisie manuelle (ex. copiée depuis
   // Boursorama) prend systématiquement le pas sur l'estimation du backend,
   // et le potentiel (%) est toujours recalculé ICI par rapport au cours
@@ -3450,7 +3486,7 @@ function cardContent(ticker, d, alertMsgs){
     </div>
     ${checklistBox(ticker)}
     <span class="badge ${d.conseil}" title="${escapeHtml(conseilTooltip(d))}">${d.conseil}</span><span style="font-size:.72rem; color:var(--ink-muted); margin-left:5px; cursor:help;" title="${escapeHtml(conseilTooltip(d))}">score ${d.scoring && d.scoring.global!==null && d.scoring.global!==undefined ? fmt(d.scoring.global,2)+'/10' : '—'} ⓘ</span>
-    <div class="price">${priceLineHtml(cours, devise, dailyVarPct, ticker)}</div>
+    ${priceLineHtml(cours, devise, dailyVarPct, ticker, dailyHaut, dailyBas)}
     ${priceFreshnessNote ? `<div style="margin:-4px 0 4px;">${priceFreshnessNote}</div>` : ''}
     ${pnlTopLine ? `<div class="price-top-pnl">${pnlTopLine}</div>` : ''}
     <div class="kv">
